@@ -224,6 +224,130 @@ footer a:first-child { margin-left: 0; }
 .appicon svg, nav.top .brand svg { display: block; width: 100%; height: 100%; }
 nav.top .brand span.i { width: 32px; height: 32px; border-radius: 8px; overflow: hidden; flex: none; }
 
+/* =================== Motion =================== */
+/* Twinkling star layers and a shooting star over every night-sky section */
+.sky::after {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background-image:
+    radial-gradient(1.4px 1.4px at 20% 30%, #fff 50%, transparent 51%),
+    radial-gradient(1.2px 1.2px at 52% 18%, #DDD6FE 50%, transparent 51%),
+    radial-gradient(1.6px 1.6px at 78% 48%, #fff 50%, transparent 51%),
+    radial-gradient(1px 1px at 33% 75%, #fff 50%, transparent 51%),
+    radial-gradient(1.3px 1.3px at 88% 12%, #C4B5FD 50%, transparent 51%),
+    radial-gradient(1.1px 1.1px at 8% 55%, #fff 50%, transparent 51%);
+  animation: twinkle 4.5s ease-in-out infinite alternate;
+}
+.sky::before { animation: twinkle 6s ease-in-out infinite alternate-reverse; }
+@keyframes twinkle { from { opacity: .25; } to { opacity: 1; } }
+.shooting {
+  position: absolute; top: 12%; left: -10%; width: 160px; height: 2px; z-index: -1; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(221,214,254,.95));
+  border-radius: 2px; transform: rotate(-18deg); opacity: 0;
+  animation: shoot 9s ease-in 2s infinite;
+}
+.shooting.b { top: 28%; animation-delay: 6.5s; animation-duration: 11s; }
+@keyframes shoot {
+  0% { transform: translate(0, 0) rotate(-18deg); opacity: 0; }
+  2% { opacity: 1; }
+  10% { transform: translate(85vw, 28vh) rotate(-18deg); opacity: 0; }
+  100% { opacity: 0; }
+}
+/* A slow glow behind the hero phones */
+.phones::before {
+  content: ""; position: absolute; inset: 10% 5%; z-index: -1; border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(109,74,255,.45), transparent);
+  filter: blur(30px); animation: breathe 6s ease-in-out infinite;
+}
+@keyframes breathe { 0%,100% { opacity: .55; transform: scale(.95); } 50% { opacity: 1; transform: scale(1.05); } }
+/* Floating phones */
+.float { animation: float 7s ease-in-out infinite; }
+.float.slow { animation-duration: 9s; animation-delay: -3s; }
+@keyframes float { 0%,100% { translate: 0 0; } 50% { translate: 0 -14px; } }
+/* The motto's gradient drifts */
+.motto { background-size: 200% 100%; animation: drift 8s ease-in-out infinite alternate; }
+@keyframes drift { from { background-position: 0% 50%; } to { background-position: 100% 50%; } }
+/* Icon glow */
+.appicon { animation: iconglow 5s ease-in-out infinite; }
+@keyframes iconglow { 0%,100% { box-shadow: 0 18px 50px rgba(109,74,255,.35); } 50% { box-shadow: 0 18px 70px rgba(109,74,255,.7); } }
+
+/* Scroll reveal (added by the script) */
+.reveal { opacity: 0; transform: translateY(28px); transition: opacity .8s ease, transform .8s cubic-bezier(.2,.7,.2,1); }
+.reveal.in { opacity: 1; transform: none; }
+
+/* Rotating word in a headline */
+.rotate { display: inline-block; position: relative; color: var(--accent-icon); min-width: 2ch; }
+.rotate .w { display: inline-block; animation: wordin .5s cubic-bezier(.2,.7,.2,1); }
+@keyframes wordin { from { opacity: 0; transform: translateY(.4em); filter: blur(4px); } to { opacity: 1; transform: none; filter: none; } }
+
+/* The ringing alarm */
+.ringing .ui-time { animation: ringpulse 1.4s ease-in-out infinite; }
+@keyframes ringpulse { 0%,100% { text-shadow: 0 0 0 rgba(196,181,253,0); } 50% { text-shadow: 0 0 24px rgba(196,181,253,.8); } }
+.ring-waves { position: relative; height: 120px; display: grid; place-items: center; margin-top: 10px; }
+.ring-waves span {
+  position: absolute; width: 56px; height: 56px; border-radius: 50%; border: 2px solid rgba(139,92,246,.8);
+  animation: wave 2.4s ease-out infinite;
+}
+.ring-waves span:nth-child(2) { animation-delay: .8s; }
+.ring-waves span:nth-child(3) { animation-delay: 1.6s; }
+.ring-waves b { font-size: 26px; animation: wiggle 1.2s ease-in-out infinite; }
+@keyframes wave { from { transform: scale(.6); opacity: 1; } to { transform: scale(2.4); opacity: 0; } }
+@keyframes wiggle { 0%,100% { rotate: 0deg; } 10% { rotate: -14deg; } 20% { rotate: 12deg; } 30% { rotate: -8deg; } 40% { rotate: 0deg; } }
+.ui-slide { position: relative; overflow: hidden; }
+.ui-slide::after {
+  content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.22), transparent);
+  animation: shimmer 2.6s ease-in-out infinite;
+}
+@keyframes shimmer { to { transform: translateX(100%); } }
+.ui-slide b { animation: nudge 2.6s ease-in-out infinite; position: relative; z-index: 1; }
+@keyframes nudge { 0%,60%,100% { translate: 0 0; } 75% { translate: 26px 0; } }
+
+/* Alarm series lighting up one by one */
+.series { display: flex; gap: 6px; margin-top: 8px; }
+.series i {
+  flex: 1; height: 6px; border-radius: 4px; background: rgba(109,74,255,.25);
+  animation: seriesOn 4s ease-in-out infinite;
+}
+.series i:nth-child(2) { animation-delay: .5s; } .series i:nth-child(3) { animation-delay: 1s; }
+.series i:nth-child(4) { animation-delay: 1.5s; } .series i:nth-child(5) { animation-delay: 2s; }
+@keyframes seriesOn { 0%,10% { background: rgba(109,74,255,.25); } 20%,70% { background: #8B5CF6; box-shadow: 0 0 10px #8B5CF6; } 85%,100% { background: rgba(109,74,255,.25); } }
+
+/* Backstop ladder steps lighting in turn */
+.ladder > * { animation: rung 6s ease-in-out infinite; }
+.ladder > :nth-child(2) { animation-delay: 2s; }
+.ladder > :nth-child(3) { animation-delay: 4s; }
+@keyframes rung { 0%,5% { border-color: var(--border); box-shadow: none; } 12%,30% { border-color: rgba(251,191,36,.9); box-shadow: 0 0 22px rgba(251,191,36,.35); } 40%,100% { border-color: var(--border); box-shadow: none; } }
+
+/* A tick that draws itself */
+.pop { animation: pop 2.8s ease-in-out infinite; display: inline-block; }
+@keyframes pop { 0%,60%,100% { transform: scale(1); } 70% { transform: scale(1.5); } 80% { transform: scale(.9); } }
+
+/* Cards lift and glow under the pointer */
+.card { transition: transform .35s cubic-bezier(.2,.7,.2,1), border-color .35s, box-shadow .35s; }
+@media (hover: hover) {
+  .card:hover { transform: translateY(-4px); border-color: rgba(109,74,255,.7); box-shadow: 0 18px 50px rgba(0,0,0,.35), 0 0 0 1px rgba(109,74,255,.25); }
+}
+.btn.primary { position: relative; overflow: hidden; }
+.btn.primary::after {
+  content: ""; position: absolute; inset: 0; transform: translateX(-120%);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.35), transparent);
+  animation: shimmer 3.5s ease-in-out 1s infinite;
+}
+
+/* Nav darkens once you scroll */
+nav.top { transition: background .3s, box-shadow .3s; }
+nav.top.scrolled { background: rgba(11,16,38,.92); box-shadow: 0 8px 30px rgba(0,0,0,.35); }
+
+/* Typed Shortcuts word */
+.typed::after { content: "▍"; color: var(--accent-icon); animation: blink 1s steps(2) infinite; margin-left: 1px; }
+@keyframes blink { 50% { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .reveal { opacity: 1; transform: none; }
+}
+.ladder .ui-card { margin-bottom: 0; }
+
 .bp { display: flex; flex-direction: column; }
 .bp .btn { margin-top: auto; align-self: flex-start; }
 .bp p { margin-bottom: 18px; }
@@ -259,7 +383,7 @@ nav.top .brand span.i { width: 32px; height: 32px; border-radius: 8px; overflow:
   <div class="links"><a href="#install">Install</a><a href="#helpers">Helpers</a><a href="#blueprints">Blueprints</a><a href="#help">Help</a></div>
 </div></nav>
 
-<header class="sky hero" style="padding-bottom:120px">
+<header class="sky hero" style="padding-bottom:120px"><div class="shooting"></div><div class="shooting b"></div>
   <div class="wrap grid">
     <div>
       <div class="appicon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
@@ -285,21 +409,22 @@ nav.top .brand span.i { width: 32px; height: 32px; border-radius: 8px; overflow:
 </div>
       <span class="eyebrow">Home Assistant integration</span>
       <h1>Make your house part of your morning.</h1>
+      <p class="lead" style="margin:-4px 0 14px">Lights, curtains and speakers that <span class="rotate" data-words="wake you gently,wind you down,keep naps dark,step in if you oversleep">wake you gently</span>.</p>
       <p class="lead"><span class="motto">Up on time, every time.</span> The Home Assistant side of the Bedtime Bridge app: your house sets the alarms at bedtime, runs your wake-up and bedtime routines, and steps in with lights and speakers if you're still in bed when you should be up.</p>
       <div class="btns">
         <a class="btn primary" href="#install">Install it</a>
         <a class="btn ghost" href="https://2tk785fryr-tech.github.io/bedtime-bridge-showcase/">About the app</a>
       </div>
     </div>
-    <div class="phones"><div class="phone tilt-r"><div class="screen">
+    <div class="phones"><div class="phone tilt-r float"><div class="screen">
       <div class="ui-label">Bedtime Bridge</div>
       <div class="ui-card"><div class="ui-row"><span>Next alarm</span><b>4:30</b></div><div class="muted small">Days · leave by 5:40</div></div>
       <div class="ui-card"><div class="ui-row"><span>Last plan</span><b>22:41</b></div><div class="muted small">set at bedtime</div></div>
       <div class="ui-label">Backstop</div>
-      <div class="ui-card"><div class="ui-row"><span><span class="ui-dot" style="background:#7DE3C8"></span>Early</span><b>4:50</b></div></div>
+      <div class="ladder" style="display:grid;gap:10px;margin-bottom:10px"><div class="ui-card"><div class="ui-row"><span><span class="ui-dot" style="background:#7DE3C8"></span>Early</span><b>4:50</b></div></div>
       <div class="ui-card"><div class="ui-row"><span><span class="ui-dot" style="background:#FBBF24"></span>Deadline</span><b>5:05</b></div></div>
-      <div class="ui-card"><div class="ui-row"><span><span class="ui-dot" style="background:#FCA5A5"></span>Late</span><b>5:20</b></div></div>
-      <div class="ui-card"><div class="ui-row"><span>Snoozing</span><span class="muted">off</span></div></div>
+      <div class="ui-card"><div class="ui-row"><span><span class="ui-dot" style="background:#FCA5A5"></span>Late</span><b>5:20</b></div></div></div>
+      <div class="ui-card"><div class="ui-row"><span>Snoozing</span><b style="color:var(--snooze)" data-countdown="540">9:00</b></div></div>
     </div></div></div>
   </div>
   <div class="horizon"></div>
@@ -427,5 +552,53 @@ nav.top .brand span.i { width: 32px; height: 32px; border-radius: 8px; overflow:
   <span>Bedtime Bridge for Home Assistant</span>
   <span><a href="https://2tk785fryr-tech.github.io/bedtime-bridge-showcase/">The app</a><a href="https://2tk785fryr-tech.github.io/bedtime-bridge-shortcuts/">Shortcuts</a><a href="https://github.com/2tk785fryr-tech/bedtime-bridge-homeassistant">GitHub</a></span>
 </div></footer>
+<script>(() => {
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // Reveal cards, headings, phones and steps as they scroll into view.
+  const items = document.querySelectorAll("section .card, section h2, section .phone, .step, .table, .grouphead");
+  if (!reduce && "IntersectionObserver" in window) {
+    const io = new IntersectionObserver(es => es.forEach(e => {
+      if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+    }), { threshold: 0.12, rootMargin: "0px 0px -40px 0px" });
+    items.forEach((el, i) => {
+      el.classList.add("reveal");
+      // Stagger siblings in a grid.
+      const idx = Array.prototype.indexOf.call(el.parentElement.children, el);
+      el.style.transitionDelay = Math.min(idx, 6) * 70 + "ms";
+      io.observe(el);
+    });
+  }
+  // Nav shadow after scrolling.
+  const nav = document.querySelector("nav.top");
+  const onScroll = () => nav && nav.classList.toggle("scrolled", scrollY > 20);
+  addEventListener("scroll", onScroll, { passive: true }); onScroll();
+  // Live countdowns: <span data-countdown="402"> shows m:ss and loops.
+  document.querySelectorAll("[data-countdown]").forEach(el => {
+    const start = +el.dataset.countdown; let s = start;
+    const show = () => { el.textContent = Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+    show(); if (!reduce) setInterval(() => { s = s > 0 ? s - 1 : start; show(); }, 1000);
+  });
+  // Rotating words: <span class="rotate" data-words="Days,Swings,Nights">.
+  document.querySelectorAll(".rotate[data-words]").forEach(el => {
+    const words = el.dataset.words.split(","); let i = 0;
+    const show = () => { el.innerHTML = '<span class="w">' + words[i] + "</span>"; };
+    show(); if (!reduce) setInterval(() => { i = (i + 1) % words.length; show(); }, 2200);
+  });
+  // Typed text: <span class="typed" data-text="RUN_BEDTIME">.
+  document.querySelectorAll(".typed[data-text]").forEach(el => {
+    const t = el.dataset.text; let n = 0, dir = 1;
+    if (reduce) { el.textContent = t; return; }
+    setInterval(() => {
+      n += dir; if (n >= t.length + 8) dir = -1; if (n <= 0) dir = 1;
+      el.textContent = t.slice(0, Math.max(0, Math.min(n, t.length)));
+    }, 110);
+  });
+  // Clock that shows the real time in a phone.
+  document.querySelectorAll("[data-clock]").forEach(el => {
+    const tick = () => { const d = new Date(); el.textContent = d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0"); };
+    tick(); setInterval(tick, 15000);
+  });
+})();
+</script>
 </body>
 </html>
