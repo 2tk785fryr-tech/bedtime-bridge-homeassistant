@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bedtime Bridge for Home Assistant</title>
+<meta name="description" content="The Home Assistant integration and blueprints for the Bedtime Bridge iPhone app.">
+<meta name="theme-color" content="#0B1026">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>:root {
+  --ground: #0B1026; --surface: #141B3A; --raised: #1C2550; --border: #2A3366;
+  --text: #EEF0FF; --soft: #C9CEEA; --muted: #A9B1D6; --faint: #8F98C4;
+  --accent: #6D4AFF; --accent-2: #8B5CF6; --accent-text: #DDD6FE; --accent-icon: #C4B5FD;
+  --leave: #60A5FA; --good: #7DE3C8; --amber: #FBBF24; --snooze: #FDE047; --nap: #FF7A3D;
+  --radius: 22px;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--ground); color: var(--text);
+  font-family: "Sora", system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.6; -webkit-font-smoothing: antialiased; overflow-x: hidden;
+}
+a { color: var(--accent-text); }
+img, svg { max-width: 100%; }
+
+/* ---------- Night sky background ---------- */
+.sky {
+  position: relative; isolation: isolate;
+  background:
+    radial-gradient(1200px 600px at 75% -10%, rgba(109,74,255,.35), transparent 60%),
+    radial-gradient(900px 500px at 0% 30%, rgba(96,165,250,.12), transparent 60%),
+    linear-gradient(180deg, #1C2550 0%, #0B1026 70%);
+}
+.sky::before {
+  content: ""; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background-image:
+    radial-gradient(1.6px 1.6px at 12% 18%, #fff 50%, transparent 51%),
+    radial-gradient(1.2px 1.2px at 28% 62%, #C4B5FD 50%, transparent 51%),
+    radial-gradient(1.4px 1.4px at 44% 12%, #fff 50%, transparent 51%),
+    radial-gradient(1px 1px at 58% 40%, #A9B1D6 50%, transparent 51%),
+    radial-gradient(1.8px 1.8px at 71% 22%, #fff 50%, transparent 51%),
+    radial-gradient(1.1px 1.1px at 83% 70%, #C4B5FD 50%, transparent 51%),
+    radial-gradient(1.3px 1.3px at 92% 35%, #fff 50%, transparent 51%),
+    radial-gradient(1px 1px at 6% 80%, #A9B1D6 50%, transparent 51%),
+    radial-gradient(1.5px 1.5px at 36% 88%, #fff 50%, transparent 51%),
+    radial-gradient(1px 1px at 65% 85%, #C4B5FD 50%, transparent 51%);
+  opacity: .8;
+}
+.horizon {
+  position: absolute; left: 0; right: 0; bottom: -1px; height: 120px; z-index: -1;
+  background: radial-gradient(120% 120px at 50% 120px, var(--ground) 70%, transparent 71%);
+}
+
+/* ---------- Layout ---------- */
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+section { padding: 96px 0; }
+section.tight { padding: 64px 0; }
+.alt { background: linear-gradient(180deg, var(--ground), #10173A 50%, var(--ground)); }
+.eyebrow {
+  display: inline-block; font-size: .78rem; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--accent-icon); font-weight: 600; margin-bottom: 12px;
+}
+h1, h2, h3 { line-height: 1.15; margin: 0 0 16px; letter-spacing: -.02em; }
+h1 { font-size: clamp(2.4rem, 6vw, 4.2rem); font-weight: 700; }
+h2 { font-size: clamp(1.8rem, 4vw, 2.6rem); font-weight: 650; }
+h3 { font-size: 1.2rem; font-weight: 600; }
+p { margin: 0 0 16px; color: var(--soft); }
+.lead { font-size: clamp(1.05rem, 2.2vw, 1.3rem); color: var(--soft); max-width: 640px; }
+.center { text-align: center; }
+.center .lead { margin-left: auto; margin-right: auto; }
+.muted { color: var(--muted); }
+.small { font-size: .9rem; }
+.motto {
+  font-weight: 600; background: linear-gradient(90deg, #DDD6FE, #8B5CF6 60%, #60A5FA);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+
+/* ---------- Nav ---------- */
+nav.top {
+  position: sticky; top: 0; z-index: 50; backdrop-filter: blur(14px);
+  background: rgba(11,16,38,.72); border-bottom: 1px solid rgba(42,51,102,.6);
+}
+nav.top .wrap { display: flex; align-items: center; gap: 20px; height: 64px; }
+nav.top .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; color: var(--text); text-decoration: none; }
+nav.top .brand svg { width: 32px; height: 32px; border-radius: 8px; }
+nav.top .links { margin-left: auto; display: flex; gap: 22px; }
+nav.top .links a { color: var(--muted); text-decoration: none; font-size: .92rem; }
+nav.top .links a:hover { color: var(--text); }
+@media (max-width: 720px) { nav.top .links { display: none; } }
+
+/* ---------- Buttons ---------- */
+.btns { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 28px; }
+.center .btns { justify-content: center; }
+.btn {
+  display: inline-flex; align-items: center; gap: 8px; padding: 13px 22px; border-radius: 999px;
+  font-weight: 600; text-decoration: none; font-size: .98rem; transition: transform .15s, box-shadow .15s;
+}
+.btn:hover { transform: translateY(-1px); }
+.btn.primary { background: var(--accent); color: #fff; box-shadow: 0 10px 30px rgba(109,74,255,.45); }
+.btn.ghost { border: 1.5px solid rgba(109,74,255,.75); color: var(--accent-text); }
+.btn.sm { padding: 8px 14px; font-size: .86rem; }
+.btn.disabled { opacity: .45; pointer-events: none; }
+
+/* ---------- Hero ---------- */
+.hero { padding: 72px 0 140px; }
+.hero .grid { display: grid; grid-template-columns: 1.1fr .9fr; gap: 48px; align-items: center; }
+.hero .appicon { width: 84px; height: 84px; border-radius: 20px; box-shadow: 0 18px 50px rgba(109,74,255,.45); margin-bottom: 24px; }
+@media (max-width: 900px) { .hero .grid { grid-template-columns: 1fr; } .hero { padding-bottom: 110px; } }
+
+/* ---------- Cards and grids ---------- */
+.grid2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+@media (max-width: 900px) { .grid3, .grid4 { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 620px) { .grid2, .grid3, .grid4 { grid-template-columns: 1fr; } }
+.card {
+  background: linear-gradient(180deg, rgba(28,37,80,.85), rgba(20,27,58,.85));
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 26px;
+}
+.card p:last-child { margin-bottom: 0; }
+.card .ico {
+  width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; margin-bottom: 16px;
+  background: rgba(109,74,255,.18); color: var(--accent-icon); font-size: 1.35rem;
+}
+.card.hl { border-color: rgba(109,74,255,.8); box-shadow: 0 0 0 1px rgba(109,74,255,.35), 0 20px 50px rgba(109,74,255,.2); }
+.tag {
+  display: inline-block; font-size: .72rem; font-weight: 600; padding: 3px 10px; border-radius: 999px;
+  background: rgba(109,74,255,.22); color: var(--accent-text); margin-bottom: 12px; letter-spacing: .04em;
+}
+.tag.good { background: rgba(125,227,200,.15); color: var(--good); }
+.tag.amber { background: rgba(251,191,36,.15); color: var(--amber); }
+ul.ticks { list-style: none; padding: 0; margin: 0; }
+ul.ticks li { padding-left: 26px; position: relative; margin: 8px 0; color: var(--soft); }
+ul.ticks li::before { content: "✓"; position: absolute; left: 0; color: var(--good); font-weight: 700; }
+ul.ticks.minus li::before { content: "–"; color: var(--faint); }
+
+/* ---------- Split sections ---------- */
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; align-items: center; }
+.split.rev > :first-child { order: 2; }
+@media (max-width: 900px) { .split { grid-template-columns: 1fr; gap: 36px; } .split.rev > :first-child { order: 0; } }
+.num {
+  width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; font-weight: 700;
+  background: var(--accent); color: #fff; margin-bottom: 16px;
+}
+
+/* ---------- Phone mockup ---------- */
+.phones { position: relative; display: flex; justify-content: center; gap: 22px; }
+.phone {
+  width: 260px; aspect-ratio: 9 / 19.5; border-radius: 44px; padding: 10px; flex: none;
+  background: linear-gradient(145deg, #3a4170, #151a36); box-shadow: 0 40px 80px rgba(0,0,0,.55), 0 0 0 1px #4a5290 inset;
+}
+.phone .screen {
+  height: 100%; border-radius: 35px; overflow: hidden; position: relative;
+  background: linear-gradient(180deg, #1C2550, #0B1026 75%); padding: 46px 18px 18px; font-size: 13px;
+}
+.phone .screen::before {
+  content: ""; position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+  width: 92px; height: 26px; border-radius: 20px; background: #000;
+}
+.phone.tilt-l { transform: rotate(-6deg) translateY(28px); }
+.phone.tilt-r { transform: rotate(5deg); }
+@media (max-width: 620px) { .phone { width: 210px; } .phone.tilt-l { display: none; } .phone.tilt-r { transform: none; } }
+.ui-time { font-size: 3.6em; font-weight: 300; text-align: center; letter-spacing: -.03em; line-height: 1; margin-top: 18px; }
+.ui-date { text-align: center; color: var(--muted); font-size: .95em; }
+.ui-label { color: var(--muted); font-size: .82em; text-transform: uppercase; letter-spacing: .1em; margin: 14px 0 6px; }
+.ui-card { background: rgba(28,37,80,.9); border: 1px solid var(--border); border-radius: 16px; padding: 12px 14px; margin-bottom: 10px; }
+.ui-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.ui-chip { font-size: .78em; padding: 2px 9px; border-radius: 999px; background: #2B1F5C; color: #DDD6FE; font-weight: 600; }
+.ui-chip.blue { background: #13305A; color: #BFDBFE; }
+.ui-big { font-size: 1.7em; font-weight: 600; }
+.ui-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+.ui-alarm {
+  position: absolute; left: 14px; right: 14px; bottom: 26px; display: grid; gap: 10px;
+}
+.ui-slide {
+  height: 56px; border-radius: 999px; background: rgba(255,255,255,.12); display: flex; align-items: center;
+  padding: 5px; color: var(--soft); font-size: .95em;
+}
+.ui-slide b { width: 46px; height: 46px; border-radius: 50%; background: #fff; color: var(--ground); display: grid; place-items: center; margin-right: 18px; font-size: 1.2em; }
+.ui-snooze { height: 50px; border-radius: 999px; background: var(--accent); color: #fff; display: grid; place-items: center; font-weight: 600; }
+.ui-island {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); width: 170px; height: 34px;
+  border-radius: 20px; background: #000; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 12px; font-size: .82em; color: var(--snooze); font-weight: 600; z-index: 2;
+}
+.shot {
+  border: 1.5px dashed rgba(169,177,214,.4); border-radius: 18px; padding: 22px; text-align: center;
+  color: var(--faint); font-size: .88rem; background: rgba(20,27,58,.5);
+}
+
+/* ---------- Steps, tables, code ---------- */
+.steps { counter-reset: s; display: grid; gap: 14px; }
+.step { position: relative; padding: 18px 20px 18px 66px; background: rgba(20,27,58,.7); border: 1px solid var(--border); border-radius: 18px; }
+.step::before {
+  counter-increment: s; content: counter(s); position: absolute; left: 18px; top: 16px;
+  width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: #fff;
+  display: grid; place-items: center; font-weight: 700; font-size: .9rem;
+}
+.step p { margin: 0; }
+.step b { color: var(--text); }
+code, .kbd {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: .86em; background: rgba(109,74,255,.18);
+  color: var(--accent-text); padding: 2px 7px; border-radius: 6px; word-break: break-word;
+}
+.table { width: 100%; border-collapse: separate; border-spacing: 0; border: 1px solid var(--border); border-radius: 18px; overflow: hidden; }
+.table th, .table td { text-align: left; padding: 14px 16px; border-bottom: 1px solid var(--border); vertical-align: top; font-size: .95rem; }
+.table th { background: var(--raised); color: var(--text); font-weight: 600; }
+.table td { color: var(--soft); background: rgba(20,27,58,.6); }
+.table tr:last-child td { border-bottom: 0; }
+.table td:first-child { color: var(--text); font-weight: 600; white-space: nowrap; }
+.tablewrap { overflow-x: auto; }
+@media (max-width: 620px) { .table td:first-child { white-space: normal; } }
+
+/* ---------- Footer ---------- */
+footer { padding: 56px 0 48px; border-top: 1px solid var(--border); color: var(--faint); font-size: .9rem; }
+footer .wrap { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; justify-content: space-between; }
+footer a { color: var(--muted); text-decoration: none; margin-left: 18px; }
+footer a:first-child { margin-left: 0; }
+.appicon { overflow: hidden; }
+.appicon svg, nav.top .brand svg { display: block; width: 100%; height: 100%; }
+nav.top .brand span.i { width: 32px; height: 32px; border-radius: 8px; overflow: hidden; flex: none; }
+
+.bp { display: flex; flex-direction: column; }
+.bp .btn { margin-top: auto; align-self: flex-start; }
+.bp p { margin-bottom: 18px; }
+.flow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; position: relative; }
+@media (max-width: 900px) { .flow { grid-template-columns: 1fr; } }
+.flow .card { text-align: center; }
+.flow .arrow { color: var(--accent-icon); font-size: 1.4rem; }
+</style>
+</head>
+<body>
+<nav class="top"><div class="wrap">
+  <a class="brand" href="#"><span class="i"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  
+  <defs>
+    <linearGradient id="sky0" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1C2550"/>
+      <stop offset="1" stop-color="#0B1026"/>
+    </linearGradient>
+    <mask id="cut0">
+      <rect width="1024" height="1024" fill="#FFFFFF"/>
+      <circle cx="610" cy="390" r="250" fill="#000000"/>
+    </mask>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#sky0)"/>
+  <circle cx="198" cy="214" r="10" fill="#C4B5FD"/>
+  <circle cx="820" cy="760" r="8" fill="#C4B5FD" opacity="0.8"/>
+  <circle cx="300" cy="840" r="6" fill="#A9B1D6" opacity="0.7"/>
+  <circle cx="470" cy="520" r="290" fill="#DDD6FE" mask="url(#cut0)"/>
+  <path d="M 690 300 A 230 230 0 0 1 760 470" fill="none" stroke="#8B5CF6" stroke-width="34" stroke-linecap="round"/>
+  <path d="M 745 215 A 340 340 0 0 1 860 480" fill="none" stroke="#8B5CF6" stroke-width="34" stroke-linecap="round" opacity="0.6"/>
+</svg>
+</span>Bedtime Bridge for Home Assistant</a>
+  <div class="links"><a href="#install">Install</a><a href="#helpers">Helpers</a><a href="#blueprints">Blueprints</a><a href="#help">Help</a></div>
+</div></nav>
+
+<header class="sky hero" style="padding-bottom:120px">
+  <div class="wrap grid">
+    <div>
+      <div class="appicon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  
+  <defs>
+    <linearGradient id="sky1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1C2550"/>
+      <stop offset="1" stop-color="#0B1026"/>
+    </linearGradient>
+    <mask id="cut1">
+      <rect width="1024" height="1024" fill="#FFFFFF"/>
+      <circle cx="610" cy="390" r="250" fill="#000000"/>
+    </mask>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#sky1)"/>
+  <circle cx="198" cy="214" r="10" fill="#C4B5FD"/>
+  <circle cx="820" cy="760" r="8" fill="#C4B5FD" opacity="0.8"/>
+  <circle cx="300" cy="840" r="6" fill="#A9B1D6" opacity="0.7"/>
+  <circle cx="470" cy="520" r="290" fill="#DDD6FE" mask="url(#cut1)"/>
+  <path d="M 690 300 A 230 230 0 0 1 760 470" fill="none" stroke="#8B5CF6" stroke-width="34" stroke-linecap="round"/>
+  <path d="M 745 215 A 340 340 0 0 1 860 480" fill="none" stroke="#8B5CF6" stroke-width="34" stroke-linecap="round" opacity="0.6"/>
+</svg>
+</div>
+      <span class="eyebrow">Home Assistant integration</span>
+      <h1>Make your house part of your morning.</h1>
+      <p class="lead"><span class="motto">Up on time, every time.</span> The Home Assistant side of the Bedtime Bridge app: your house sets the alarms at bedtime, runs your wake-up and bedtime routines, and steps in with lights and speakers if you're still in bed when you should be up.</p>
+      <div class="btns">
+        <a class="btn primary" href="#install">Install it</a>
+        <a class="btn ghost" href="https://2tk785fryr-tech.github.io/bedtime-bridge-showcase/">About the app</a>
+      </div>
+    </div>
+    <div class="phones"><div class="phone tilt-r"><div class="screen">
+      <div class="ui-label">Bedtime Bridge</div>
+      <div class="ui-card"><div class="ui-row"><span>Next alarm</span><b>4:30</b></div><div class="muted small">Days · leave by 5:40</div></div>
+      <div class="ui-card"><div class="ui-row"><span>Last plan</span><b>22:41</b></div><div class="muted small">set at bedtime</div></div>
+      <div class="ui-label">Backstop</div>
+      <div class="ui-card"><div class="ui-row"><span><span class="ui-dot" style="background:#7DE3C8"></span>Early</span><b>4:50</b></div></div>
+      <div class="ui-card"><div class="ui-row"><span><span class="ui-dot" style="background:#FBBF24"></span>Deadline</span><b>5:05</b></div></div>
+      <div class="ui-card"><div class="ui-row"><span><span class="ui-dot" style="background:#FCA5A5"></span>Late</span><b>5:20</b></div></div>
+      <div class="ui-card"><div class="ui-row"><span>Snoozing</span><span class="muted">off</span></div></div>
+    </div></div></div>
+  </div>
+  <div class="horizon"></div>
+</header>
+
+<section class="tight">
+  <div class="wrap">
+    <div class="center" style="margin-bottom:36px"><span class="eyebrow">How it fits together</span><h2>Your phone plans. Your house acts.</h2></div>
+    <div class="flow">
+      <div class="card"><div class="ico" style="margin:0 auto 14px">📅</div><h3>The app</h3><p>Reads your shifts from your calendar and plans each morning: alarms, leave-by, wind-down.</p></div>
+      <div class="card"><div class="ico" style="margin:0 auto 14px">⌂</div><h3>The integration</h3><p>Sets the alarms at bedtime and turns helpers on and off as you snooze, stop, nap and wind down.</p></div>
+      <div class="card"><div class="ico" style="margin:0 auto 14px">💡</div><h3>Your automations</h3><p>React to those helpers with your lights, curtains and speakers, using the blueprints below.</p></div>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="install">
+  <div class="wrap">
+    <div class="split" style="align-items:start">
+      <div>
+        <span class="eyebrow">Before you start</span>
+        <h2>What you need</h2>
+        <ul class="ticks">
+          <li>Home Assistant 2025.1 or later.</li>
+          <li>The Bedtime Bridge app on your iPhone, with <b>Home Assistant</b> chosen as your home.</li>
+          <li>The Home Assistant Companion app on the same iPhone, for notifications and your location.</li>
+        </ul>
+        <div class="card" style="margin-top:28px"><span class="tag">By hand</span><p>Copy <code>custom_components/bedtime_bridge</code> into your <code>config/custom_components/</code> folder, then restart.</p></div>
+      </div>
+      <div>
+        <span class="eyebrow">1 · Install</span>
+        <h2>From the Marketplace</h2>
+        <div class="steps">
+          <div class="step"><p>Open <b>Marketplace</b> → <b>⋮</b> (top right) → <b>Custom repositories</b>.</p></div>
+          <div class="step"><p>Repository: <code>https://github.com/2tk785fryr-tech/bedtime-bridge-homeassistant</code>, Type: <b>Integration</b> → <b>Add</b>.</p></div>
+          <div class="step"><p>Search for <b>Bedtime Bridge</b> → <b>Download</b>, then restart Home Assistant.</p></div>
+        </div>
+        <span class="eyebrow" style="margin-top:36px">2 · Add and pair</span>
+        <div class="steps">
+          <div class="step"><p><b>Settings → Devices &amp; services → Add integration → Bedtime Bridge</b>, and pick yourself (your person or phone).</p></div>
+          <div class="step"><p>In the app: <b>Settings → Home Assistant → Pair</b>. The app and the integration exchange a code; nothing to type.</p></div>
+        </div>
+        <p class="muted small" style="margin-top:16px">Everything else in the integration's options is optional: add what you want, as below.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="helpers">
+  <div class="wrap">
+    <div class="center" style="margin-bottom:36px">
+      <span class="eyebrow">3 · Helpers</span>
+      <h2>The switches your automations watch.</h2>
+      <p class="lead">Make the ones you want in <b>Settings → Devices &amp; services → Helpers → Create helper → Toggle</b>, then pick each in the integration's options (<b>Bedtime Bridge → Configure</b>).</p>
+    </div>
+    <div class="tablewrap"><table class="table">
+      <tr><th>Helper</th><th>Turned on when</th><th>Use it for</th></tr>
+      <tr><td>Bedtime Routine</td><td>You start your bedtime routine in the app</td><td>Lights down, doors locked</td></tr>
+      <tr><td>Alarm Snoozed</td><td>You snooze</td><td>A gentle light ramp while you snooze</td></tr>
+      <tr><td>Alarm Stopped</td><td>You stop the alarm</td><td>Your wake-up: lights, curtains</td></tr>
+      <tr><td>Woke Before Alarm</td><td>You end the alarms before they ring</td><td>The same wake-up, started early</td></tr>
+      <tr><td>Sleep In</td><td>Your first alarm is after the curtains would open, or you skip a morning</td><td>Keep curtains and lights from waking you</td></tr>
+      <tr><td>Awake For Day</td><td>Good Morning; back on if you undo bedtime</td><td>Your house's day mode</td></tr>
+      <tr><td>Napping</td><td>A nap at home is running</td><td>The nap blueprint: a dark, quiet room</td></tr>
+      <tr><td>Winding Down</td><td>From wind-down until you go to bed</td><td>The wind-down blueprint: warm, dim lights</td></tr>
+      <tr><td>Left The Bedroom</td><td>The bedroom door first opens each morning (Bedroom Exit Latch)</td><td>Telling the integration you're really up</td></tr>
+    </table></div>
+    <div class="card hl" style="margin-top:20px"><span class="tag">Coming soon</span><p>The integration will be able to make these itself, or use helpers you already have, even read the other way round: an “Asleep” helper can stand in for Awake For Day.</p></div>
+    <p class="muted small center" style="margin-top:20px">It can also use a bed sensor (your side), your work calendar, a weather entity for bad-weather extra time, and your phone's battery sensors.</p>
+  </div>
+</section>
+
+<section class="alt" id="blueprints">
+  <div class="wrap">
+    <div class="center" style="margin-bottom:40px">
+      <span class="eyebrow">4 · Blueprints</span>
+      <h2>Tap to import. Pick your own devices.</h2>
+      <p class="lead">Each blueprint is generic: nothing is filled in for you. Import it, create an automation from it, and choose your lights, speakers and sensors.</p>
+    </div>
+    <h3 class="eyebrow" style="font-size:.9rem">Recommended</h3>
+    <div class="grid3">
+      <div class="card bp hl"><span class="tag amber">Safety net</span><h3>Wake Deadline Backstop</h3><p>Still in bed as your get-up deadline nears? It steps up: a lamp and a push, then a critical push, speakers and full lights, until you're up. Silent on every normal morning.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
+      <div class="card bp"><h3>Bedtime Bridge alarm event</h3><p>Runs your actions when the app reports an alarm event: snoozed, stopped, planned, cancelled, or leave-by updated.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
+      <div class="card bp"><h3>Bedroom Exit Latch</h3><p>Turns on Left The Bedroom the first time the bedroom door opens each morning, and resets it at night.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
+    </div>
+    <h3 class="eyebrow" style="font-size:.9rem;margin-top:40px">Optional</h3>
+    <div class="grid3">
+      <div class="card bp"><span class="tag good">New</span><h3>Nap</h3><p>When a nap starts in a room, closes its curtains and turns off its lights, then puts them back after. Add the bed or presence sensors so a couch nap leaves the bedroom alone.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
+      <div class="card bp"><span class="tag good">New</span><h3>Wind-down</h3><p>Warm, dim lights when wind-down starts (only the ones already on), curtains closed, anything else you add.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
+      <div class="card bp"><h3>Missing plan</h3><p>Warns you if a work day is coming but tonight's alarms weren't set. Checks once you've been in bed a while.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
+      <div class="card bp"><h3>Wake Snooze Fade</h3><p>Brings a light up slowly while you snooze.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
+      <div class="card bp"><h3>Wake Sequence</h3><p>Your wake-up when you stop the alarm: lights, curtains, a speaker.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
+      <div class="card bp"><h3>Bedtime Routine</h3><p>Your bedtime when Bedtime Routine turns on: lights down, doors locked.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
+    </div>
+  </div>
+</section>
+
+<section id="help">
+  <div class="wrap">
+    <div class="grid2">
+      <div>
+        <span class="eyebrow">5 · Check it works</span>
+        <h2>Three quick checks</h2>
+        <ul class="ticks">
+          <li><b>Devices &amp; services → Bedtime Bridge</b> shows its sensors: next alarm, last plan, backstop times, snoozing.</li>
+          <li>The app's <b>Settings → Home Assistant</b> says <b>Connected</b>.</li>
+          <li>Tap <b>Preview tomorrow</b> in the app: the last plan sensor updates.</li>
+        </ul>
+      </div>
+      <div>
+        <span class="eyebrow">Troubleshooting</span>
+        <h2>If something's off</h2>
+        <div style="display:grid;gap:12px">
+          <div class="card"><h3>“Not connected”</h3><p>Check Home Assistant is reachable from your phone (try the Companion app), then pair again.</p></div>
+          <div class="card"><h3>Alarms weren't set at bedtime</h3><p>The missing plan blueprint warns you. Check the integration's last plan sensor.</p></div>
+          <div class="card"><h3>A helper never turns on</h3><p>Make sure it's picked in the integration's options.</p></div>
+          <div class="card"><h3>Moving from an older install</h3><p>No need to set it up again: add this repository, remove the old Bedtime Bridge entry, download from here, restart. Your pairing and settings stay.</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer><div class="wrap">
+  <span>Bedtime Bridge for Home Assistant</span>
+  <span><a href="https://2tk785fryr-tech.github.io/bedtime-bridge-showcase/">The app</a><a href="https://2tk785fryr-tech.github.io/bedtime-bridge-shortcuts/">Shortcuts</a><a href="https://github.com/2tk785fryr-tech/bedtime-bridge-homeassistant">GitHub</a></span>
+</div></footer>
+</body>
+</html>
