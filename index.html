@@ -380,7 +380,7 @@ nav.top.scrolled { background: rgba(11,16,38,.92); box-shadow: 0 8px 30px rgba(0
   <path d="M 745 215 A 340 340 0 0 1 860 480" fill="none" stroke="#8B5CF6" stroke-width="34" stroke-linecap="round" opacity="0.6"/>
 </svg>
 </span>Bedtime Bridge for Home Assistant</a>
-  <div class="links"><a href="#install">Install</a><a href="#helpers">Helpers</a><a href="#blueprints">Blueprints</a><a href="#help">Help</a></div>
+  <div class="links"><a href="#install">Install</a><a href="#helpers">Made for you</a><a href="#blueprints">Blueprints</a><a href="#help">Help</a></div>
 </div></nav>
 
 <header class="sky hero" style="padding-bottom:120px"><div class="shooting"></div><div class="shooting b"></div>
@@ -418,7 +418,7 @@ nav.top.scrolled { background: rgba(11,16,38,.92); box-shadow: 0 8px 30px rgba(0
     </div>
     <div class="phones"><div class="phone tilt-r float"><div class="screen">
       <div class="ui-label">Bedtime Bridge</div>
-      <div class="ui-card"><div class="ui-row"><span>Next alarm</span><b>4:30</b></div><div class="muted small">Days · leave by 5:40</div></div>
+      <div class="ui-card"><div class="ui-row"><span>Next alarm</span><b>4:30</b></div><div class="muted small">Work · leave by 5:40</div></div>
       <div class="ui-card"><div class="ui-row"><span>Last plan</span><b>22:41</b></div><div class="muted small">set at bedtime</div></div>
       <div class="ui-label">Backstop</div>
       <div class="ladder" style="display:grid;gap:10px;margin-bottom:10px"><div class="ui-card"><div class="ui-row"><span><span class="ui-dot" style="background:#7DE3C8"></span>Early</span><b>4:50</b></div></div>
@@ -435,7 +435,7 @@ nav.top.scrolled { background: rgba(11,16,38,.92); box-shadow: 0 8px 30px rgba(0
     <div class="center" style="margin-bottom:36px"><span class="eyebrow">How it fits together</span><h2>Your phone plans. Your house acts.</h2></div>
     <div class="flow">
       <div class="card"><div class="ico" style="margin:0 auto 14px">📅</div><h3>The app</h3><p>Reads your shifts from your calendar and plans each morning: alarms, leave-by, wind-down.</p></div>
-      <div class="card"><div class="ico" style="margin:0 auto 14px">⌂</div><h3>The integration</h3><p>Sets the alarms at bedtime and turns helpers on and off as you snooze, stop, nap and wind down.</p></div>
+      <div class="card"><div class="ico" style="margin:0 auto 14px">⌂</div><h3>The integration</h3><p>Sets the alarms at bedtime and turns its own switches on and off as you snooze, stop, nap and wind down.</p></div>
       <div class="card"><div class="ico" style="margin:0 auto 14px">💡</div><h3>Your automations</h3><p>React to those helpers with your lights, curtains and speakers, using the blueprints below.</p></div>
     </div>
   </div>
@@ -465,7 +465,7 @@ nav.top.scrolled { background: rgba(11,16,38,.92); box-shadow: 0 8px 30px rgba(0
         <span class="eyebrow" style="margin-top:36px">2 · Add and pair</span>
         <div class="steps">
           <div class="step"><p><b>Settings → Devices &amp; services → Add integration → Bedtime Bridge</b>, and pick yourself (your person or phone).</p></div>
-          <div class="step"><p>In the app: <b>Settings → Home Assistant → Pair</b>. The app and the integration exchange a code; nothing to type.</p></div>
+          <div class="step"><p>Open the last step in the Home Assistant app on your iPhone and tap <b>Pair Bedtime Bridge</b>: both addresses are saved in the app (or copy the link into <b>Settings → Home Assistant</b>).</p></div>
         </div>
         <p class="muted small" style="margin-top:16px">Everything else in the integration's options is optional: add what you want, as below.</p>
       </div>
@@ -476,24 +476,40 @@ nav.top.scrolled { background: rgba(11,16,38,.92); box-shadow: 0 8px 30px rgba(0
 <section id="helpers">
   <div class="wrap">
     <div class="center" style="margin-bottom:36px">
-      <span class="eyebrow">3 · Helpers</span>
+      <span class="eyebrow">3 · Made for you</span>
       <h2>The switches your automations watch.</h2>
-      <p class="lead">Make the ones you want in <b>Settings → Devices &amp; services → Helpers → Create helper → Toggle</b>, then pick each in the integration's options (<b>Bedtime Bridge → Configure</b>).</p>
+      <p class="lead">A new install makes these itself, so there's nothing to create by hand. They keep their state across restarts.</p>
     </div>
     <div class="tablewrap"><table class="table">
-      <tr><th>Helper</th><th>Turned on when</th><th>Use it for</th></tr>
-      <tr><td>Bedtime Routine</td><td>You start your bedtime routine in the app</td><td>Lights down, doors locked</td></tr>
-      <tr><td>Alarm Snoozed</td><td>You snooze</td><td>A gentle light ramp while you snooze</td></tr>
-      <tr><td>Alarm Stopped</td><td>You stop the alarm</td><td>Your wake-up: lights, curtains</td></tr>
-      <tr><td>Woke Before Alarm</td><td>You end the alarms before they ring</td><td>The same wake-up, started early</td></tr>
-      <tr><td>Sleep In</td><td>Your first alarm is after the curtains would open, or you skip a morning</td><td>Keep curtains and lights from waking you</td></tr>
-      <tr><td>Awake For Day</td><td>Good Morning; back on if you undo bedtime</td><td>Your house's day mode</td></tr>
-      <tr><td>Napping</td><td>A nap at home is running</td><td>The nap blueprint: a dark, quiet room</td></tr>
-      <tr><td>Winding Down</td><td>From wind-down until you go to bed</td><td>The wind-down blueprint: warm, dim lights</td></tr>
-      <tr><td>Left The Bedroom</td><td>The bedroom door first opens each morning (Bedroom Exit Latch)</td><td>Telling the integration you're really up</td></tr>
+      <tr><th>Entity</th><th>On when</th><th>Use it for</th></tr>
+      <tr><td><code>switch.bedtime_bridge_bedtime</code></td><td>You start your bedtime routine in the app</td><td>Lights down, doors locked</td></tr>
+      <tr><td><code>switch.bedtime_bridge_snooze</code></td><td>You snooze</td><td>A gentle light ramp while you snooze</td></tr>
+      <tr><td><code>switch.bedtime_bridge_stop</code></td><td>You stop the first alarm</td><td>Your wake-up: lights, curtains</td></tr>
+      <tr><td><code>switch.bedtime_bridge_early_wake_up</code></td><td>You end the alarms before they ring</td><td>The same wake-up, started early</td></tr>
+      <tr><td><code>switch.bedtime_bridge_sleep_in</code></td><td>Your first alarm is after the curtains would open, or you skip a morning</td><td>Keep curtains and lights from waking you</td></tr>
+      <tr><td><code>switch.bedtime_bridge_awake_for_day</code></td><td>Good Morning, or your alarms are done (off at bedtime)</td><td>Your house's day mode</td></tr>
+      <tr><td><code>switch.bedtime_bridge_napping</code></td><td>A nap at home is running</td><td>The nap blueprint: a dark, quiet room</td></tr>
+      <tr><td><code>switch.bedtime_bridge_winding_down</code></td><td>From wind-down until you go to bed</td><td>The wind-down blueprint: warm, dim lights</td></tr>
+      <tr><td><code>switch.bedtime_bridge_exit_latch</code></td><td>Your bedroom door sensor opens (off at bedtime)</td><td>Telling the integration and the backstop you're up</td></tr>
+      <tr><td><code>select.bedtime_bridge_shift_override</code></td><td>Auto, Off, or a shift type</td><td>Off for a day off; skipping a shift sets it</td></tr>
     </table></div>
-    <div class="card hl" style="margin-top:20px"><span class="tag">Coming soon</span><p>The integration will be able to make these itself, or use helpers you already have, even read the other way round: an “Asleep” helper can stand in for Awake For Day.</p></div>
-    <p class="muted small center" style="margin-top:20px">It can also use a bed sensor (your side), your work calendar, a weather entity for bad-weather extra time, and your phone's battery sensors.</p>
+    <div class="card hl" style="margin-top:20px"><span class="tag good">Your own helpers</span><p>Already have some? In <b>Bedtime Bridge → Configure</b>, each one says <b>Bedtime Bridge makes it</b> or <b>Use mine</b>: a toggle, a switch, or a binary sensor (only read). An “Asleep for the night” helper can stand in for Awake For Day: choose <b>On means asleep</b>, and it's read the other way round and turned off at Good Morning.</p></div>
+    <p class="muted small center" style="margin-top:20px">Still yours to add, all optional: a bed sensor (your side), a bedroom door sensor, your work calendar, a weather entity, your phone's battery sensors, and text-to-speech and speakers for the backstop's announcement.</p>
+  </div>
+</section>
+
+<section id="briefings">
+  <div class="wrap">
+    <div class="center" style="margin-bottom:28px">
+      <span class="eyebrow">New in 0.4.12</span>
+      <h2>Briefings for your speakers.</h2>
+      <p class="lead">The morning and bedtime briefings land on the <code>sensor.bedtime_bridge_briefing</code> sensor and the <code>morning_briefing</code> and <code>bedtime_briefing</code> events. Speak them from your own automation (trigger on the event), and skip home speakers when <code>away</code> is true.</p>
+    </div>
+    <div class="grid3">
+      <div class="card"><h3>Morning</h3><p class="small">Your greeting, today's shift or appointment, leave by and the drive, time to get ready, the weather.</p></div>
+      <div class="card"><h3>Bedtime</h3><p class="small">Tomorrow's alarms, the sleep you'll get, anything open or unlocked, heads-ups. Once a night.</p></div>
+      <div class="card"><h3>A quiet good morning</h3><p class="small">Set the other side of the bed in the options: on a morning with no alarms while someone's still asleep, good morning is <code>RUN_QUIET_MORNING</code> and the curtains stay shut.</p></div>
+    </div>
   </div>
 </section>
 
@@ -504,20 +520,16 @@ nav.top.scrolled { background: rgba(11,16,38,.92); box-shadow: 0 8px 30px rgba(0
       <h2>Tap to import. Pick your own devices.</h2>
       <p class="lead">Each blueprint is generic: nothing is filled in for you. Import it, create an automation from it, and choose your lights, speakers and sensors.</p>
     </div>
-    <h3 class="eyebrow" style="font-size:.9rem">Recommended</h3>
     <div class="grid3">
-      <div class="card bp hl"><span class="tag amber">Safety net</span><h3>Wake Deadline Backstop</h3><p>Still in bed as your get-up deadline nears? It steps up: a lamp and a push, then a critical push, speakers and full lights, until you're up. Silent on every normal morning.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
-      <div class="card bp"><h3>Bedtime Bridge alarm event</h3><p>Runs your actions when the app reports an alarm event: snoozed, stopped, planned, cancelled, or leave-by updated.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
-      <div class="card bp"><h3>Bedroom Exit Latch</h3><p>Turns on Left The Bedroom the first time the bedroom door opens each morning, and resets it at night.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
-    </div>
-    <h3 class="eyebrow" style="font-size:.9rem;margin-top:40px">Optional</h3>
-    <div class="grid3">
-      <div class="card bp"><span class="tag good">New</span><h3>Nap</h3><p>When a nap starts in a room, closes its curtains and turns off its lights, then puts them back after. Add the bed or presence sensors so a couch nap leaves the bedroom alone.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
-      <div class="card bp"><span class="tag good">New</span><h3>Wind-down</h3><p>Warm, dim lights when wind-down starts (only the ones already on), curtains closed, anything else you add.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
-      <div class="card bp"><h3>Missing plan</h3><p>Warns you if a work day is coming but tonight's alarms weren't set. Checks once you've been in bed a while.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
-      <div class="card bp"><h3>Wake Snooze Fade</h3><p>Brings a light up slowly while you snooze.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
-      <div class="card bp"><h3>Wake Sequence</h3><p>Your wake-up when you stop the alarm: lights, curtains, a speaker.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
-      <div class="card bp"><h3>Bedtime Routine</h3><p>Your bedtime when Bedtime Routine turns on: lights down, doors locked.</p><a class="btn sm ghost disabled" href="#">Import (soon)</a></div>
+      <div class="card bp hl"><span class="tag amber">Safety net</span><h3>Wake deadline backstop</h3><p>Still in bed as your get-up deadline nears? It steps up: a lamp and a push, then a critical push, an announcement and full lights, until you're up. Silent on every normal morning.</p><a class="btn sm primary" href="https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_wake_deadline_backstop.yaml">Import blueprint</a></div>
+      <div class="card bp"><h3>Alarm event</h3><p>Runs your actions when the app reports an alarm event: snoozed, stopped, planned, cancelled, or leave-by updated.</p><a class="btn sm primary" href="https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_alarm_event.yaml">Import blueprint</a></div>
+      <div class="card bp"><h3>Missing plan</h3><p>Warns you if a work day is coming but tonight's alarms weren't set. Checks once you've been in bed a while. Needs a shift sensor of yours with a <code>next_shift_start</code> attribute.</p><a class="btn sm primary" href="https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_missing_plan.yaml">Import blueprint</a></div>
+      <div class="card bp"><h3>Nap</h3><p>When a nap starts in a room, closes its curtains and turns off its lights, then puts them back after. Add the bed or presence sensors so a couch nap leaves the bedroom alone.</p><a class="btn sm primary" href="https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_nap.yaml">Import blueprint</a></div>
+      <div class="card bp"><h3>Wind-down</h3><p>Warm, dim lights when wind-down starts (only the ones already on), curtains closed, anything else you add.</p><a class="btn sm primary" href="https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_wind_down.yaml">Import blueprint</a></div>
+      <div class="card bp"><h3>Snooze fade</h3><p>Brings a bedside light up slowly while you snooze, and fades it back down if you go back to sleep.</p><a class="btn sm primary" href="https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_snooze_fade.yaml">Import blueprint</a></div>
+      <div class="card bp"><h3>Wake sequence</h3><p>Your wake-up when you stop the alarm: day mode on, the bedside lights or daylight, and the lights next to someone still asleep left dark.</p><a class="btn sm primary" href="https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_wake_sequence.yaml">Import blueprint</a></div>
+      <div class="card bp"><h3>Bedtime routine</h3><p>Lights off, curtains closed, and the rooms someone's still using left on, with one push and a button to turn them off anyway.</p><a class="btn sm primary" href="https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_bedtime_routine.yaml">Import blueprint</a></div>
+      <div class="card bp"><h3>Exit latch</h3><p>Your own left-the-bedroom latch: on when the door opens, off again once you're back in bed a while. The integration's own switch already follows the door.</p><a class="btn sm primary" href="https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_exit_latch.yaml">Import blueprint</a></div>
     </div>
   </div>
 </section>
@@ -531,7 +543,7 @@ nav.top.scrolled { background: rgba(11,16,38,.92); box-shadow: 0 8px 30px rgba(0
         <ul class="ticks">
           <li><b>Devices &amp; services → Bedtime Bridge</b> shows its sensors: next alarm, last plan, backstop times, snoozing.</li>
           <li>The app's <b>Settings → Home Assistant</b> says <b>Connected</b>.</li>
-          <li>Tap <b>Preview tomorrow</b> in the app: the last plan sensor updates.</li>
+          <li>Tap <b>Set alarms</b> in the app: the last plan sensor updates. (<b>Preview tomorrow</b> only shows a plan; it sets nothing.)</li>
         </ul>
       </div>
       <div>
@@ -540,7 +552,7 @@ nav.top.scrolled { background: rgba(11,16,38,.92); box-shadow: 0 8px 30px rgba(0
         <div style="display:grid;gap:12px">
           <div class="card"><h3>“Not connected”</h3><p>Check Home Assistant is reachable from your phone (try the Companion app), then pair again.</p></div>
           <div class="card"><h3>Alarms weren't set at bedtime</h3><p>The missing plan blueprint warns you. Check the integration's last plan sensor.</p></div>
-          <div class="card"><h3>A helper never turns on</h3><p>Make sure it's picked in the integration's options.</p></div>
+          <div class="card"><h3>A switch never turns on</h3><p>Check the helper's choice under Configure: with Use mine and nothing picked, it isn't used.</p></div>
           <div class="card"><h3>Moving from an older install</h3><p>No need to set it up again: add this repository, remove the old Bedtime Bridge entry, download from here, restart. Your pairing and settings stay.</p></div>
         </div>
       </div>
