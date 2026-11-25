@@ -1,0 +1,589 @@
+blueprint:
+  name: Bedtime Bridge bedtime routine
+  description: >
+    A one-tap good night when you start your bedtime routine in the Bedtime Bridge app. Turns
+    off every light that's on, turns off a living area and an outdoor area only when nobody is
+    using them, closes the curtains, and tells you once if it left anything on, with a button
+    to turn it off anyway.
+
+
+    It follows the integration's Bedtime helper (switch.bedtime_bridge_bedtime, or your own
+    picked in the integration's options) and turns it back off straight away.
+
+
+    In order:
+
+    1. Optional: turns off a mode like Movie time first and waits, so whatever restores the
+       lights after a movie finishes before the sweep (otherwise they come back on).
+
+    2. Optional: turns your day mode helper off (Bedtime Bridge turns its own off at bedtime
+       already).
+
+    3. Turns off every light that's on, except your keep-on lights and the ones in the areas
+       below.
+
+    4. Living area: turned off only if its occupancy sensors are all off and none of its media
+       players is playing or paused. A sensor that reads unavailable counts as occupied, so a
+       dead sensor leaves the lights on.
+
+    5. TV and receiver: turned off only when the living area is clear and every standby source
+       (e.g. a streaming box or a games console) reads standby or off, so the TV isn't turned
+       off under someone watching.
+
+    6. Outdoor area: turned off only if its override helper is off and its door hasn't opened
+       or closed within the last few minutes (someone may be out there). Things that must go
+       off before their power (e.g. a fan on a switched feed) go first.
+
+    7. Always-off extras (e.g. a seasonal light), then the curtains that aren't already
+       closed, then anything you add under "Also do this".
+
+    8. If an area was left on: one notification saying which, with a "Turn them off anyway"
+       button, and (living area only) an announcement on your speakers. The notification is
+       cleared after the tap or when the wait runs out.
+
+
+    It never sweeps switches (a light shown as a switch has a hidden twin, and sweeping those
+    could turn off your keep-on lights), and never touches locks, thermostats or covers other
+    than the ones you list.
+  domain: automation
+  source_url: https://github.com/2tk785fryr-tech/bedtime-bridge-homeassistant/blob/main/blueprints/automation/bedtime_bridge/bedtime_bridge_bedtime_routine.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    core_section:
+      name: Bedtime
+      icon: mdi:bed
+      input:
+        bedtime_helper:
+          name: Bedtime helper
+          description: >
+            The helper picked as Bedtime helper in the Bedtime Bridge integration's options
+            (Bedtime Bridge's own is switch.bedtime_bridge_bedtime). Turned back off straight
+            away.
+          selector:
+            entity:
+              domain:
+                - switch
+                - input_boolean
+        night_mode_helper:
+          name: Day mode helper to turn off (optional)
+          description: >
+            On means day mode. Bedtime Bridge turns its own (switch.bedtime_bridge_awake_for_day)
+            off at bedtime already, so pick yours only if you use your own.
+          default: ""
+          selector:
+            entity:
+              domain:
+                - switch
+                - input_boolean
+        movie_mode_helper:
+          name: Turn these off first (optional)
+          description: E.g. a Movie time helper whose automation puts the lights back.
+          default: []
+          selector:
+            entity:
+              domain:
+                - switch
+                - input_boolean
+              multiple: true
+        movie_settle_seconds:
+          name: Then wait
+          description: Time for that automation to finish putting the lights back.
+          default: 10
+          selector:
+            number:
+              min: 0
+              max: 120
+              unit_of_measurement: s
+              mode: box
+        settle_seconds:
+          name: Wait after day mode turns off
+          description: Gives automations that react to day mode a moment before the guards are checked.
+          default: 3
+          selector:
+            number:
+              min: 0
+              max: 60
+              unit_of_measurement: s
+              mode: box
+        sweep_all_lights:
+          name: Turn off every other light that's on
+          description: >
+            Every light in the house that's on, except your keep-on lights and the areas below.
+            Off: only what you list here is turned off.
+          default: true
+          selector:
+            boolean: {}
+        keep_on_lights:
+          name: Keep-on lights (optional)
+          description: >
+            Never touched: left as they are, never turned on. E.g. a nightlight, porch and
+            driveway lights, a garage opener's light.
+          default: []
+          selector:
+            entity:
+              domain: light
+              multiple: true
+    living_section:
+      name: Living area (only when nobody's there)
+      icon: mdi:sofa
+      input:
+        living_area_name:
+          name: Name in the notification
+          default: living area
+          selector:
+            text: {}
+        occupancy_entities:
+          name: Occupancy sensors (optional)
+          description: >
+            Any of these not off keeps the area on. Use fast sensors: ones that stay occupied
+            for half an hour would keep it on every night.
+          default: []
+          selector:
+            entity:
+              domain: binary_sensor
+              multiple: true
+        media_guard_entities:
+          name: Media players (optional)
+          description: Any of these playing or paused keeps the area on.
+          default: []
+          selector:
+            entity:
+              domain: media_player
+              multiple: true
+        living_entities:
+          name: Turn these off (optional)
+          description: Lights, fans or anything else in the area.
+          default: []
+          selector:
+            entity:
+              multiple: true
+        standby_source_entities:
+          name: Standby sources (optional)
+          description: >
+            Every one of these must read standby or off before the TV and receiver are turned
+            off. Unavailable keeps them on. A console that can't be turned off from Home
+            Assistant belongs here, not in the list below. Empty: the TV and receiver are never
+            turned off.
+          default: []
+          selector:
+            entity:
+              domain: media_player
+              multiple: true
+        media_off_entities:
+          name: TV and receiver to turn off (optional)
+          default: []
+          selector:
+            entity:
+              domain: media_player
+              multiple: true
+    outdoor_section:
+      name: Outdoor area (only when nobody's out)
+      icon: mdi:string-lights
+      input:
+        outdoor_area_name:
+          name: Name in the notification
+          default: outdoor
+          selector:
+            text: {}
+        outdoor_override_entities:
+          name: Keep it on while these are on (optional)
+          description: E.g. a "staying outside" helper.
+          default: []
+          selector:
+            entity:
+              domain:
+                - input_boolean
+                - switch
+              multiple: true
+        outdoor_door_entities:
+          name: Door sensors (optional)
+          description: The area stays on if one of these opened or closed within the time below.
+          default: []
+          selector:
+            entity:
+              domain: binary_sensor
+              multiple: true
+        outdoor_recent_minutes:
+          name: Door used within
+          default: 10
+          selector:
+            number:
+              min: 1
+              max: 120
+              unit_of_measurement: min
+              mode: box
+        outdoor_first_entities:
+          name: Turn these off first (optional)
+          description: E.g. a ceiling fan and its light that run on the switched feed below.
+          default: []
+          selector:
+            entity:
+              multiple: true
+        outdoor_feed_delay_seconds:
+          name: Then wait
+          default: 3
+          selector:
+            number:
+              min: 0
+              max: 60
+              unit_of_measurement: s
+              mode: box
+        outdoor_feed_entities:
+          name: Then turn these off (optional)
+          description: E.g. the switch that feeds them.
+          default: []
+          selector:
+            entity:
+              multiple: true
+        outdoor_other_entities:
+          name: Other outdoor things to turn off (optional)
+          default: []
+          selector:
+            entity:
+              multiple: true
+    finish_section:
+      name: Curtains and extras
+      icon: mdi:curtains
+      collapsed: true
+      input:
+        curtain_entities:
+          name: Close these curtains or blinds (optional)
+          description: Only the ones not already closed or closing.
+          default: []
+          selector:
+            entity:
+              domain: cover
+              multiple: true
+        extra_off_entities:
+          name: Always turn these off (optional)
+          description: Any kind, no check. E.g. a seasonal light.
+          default: []
+          selector:
+            entity:
+              multiple: true
+        extra_actions:
+          name: Also do this (optional)
+          description: E.g. lock the doors or set the thermostat.
+          default: []
+          selector:
+            action: {}
+    notify_section:
+      name: Notification and announcement
+      icon: mdi:bell-outline
+      collapsed: true
+      input:
+        notify_action:
+          name: Notify action (optional)
+          description: >
+            Your phone's mobile app notify action, e.g. notify.mobile_app_your_phone (not
+            notify.send_message, which can't carry the button). Empty: no notification.
+          default: ""
+          selector:
+            text: {}
+        notification_action_id:
+          name: Button ID
+          description: Must be different for each automation made from this blueprint.
+          default: BEDTIME_FORCE_OFF
+          selector:
+            text: {}
+        interruption_level:
+          name: Interruption level
+          description: Time-sensitive if a Sleep Focus would hide it before you read it.
+          default: active
+          selector:
+            select:
+              options:
+                - passive
+                - active
+                - time-sensitive
+        force_off_wait_minutes:
+          name: Wait this long for the button
+          default: 5
+          selector:
+            number:
+              min: 1
+              max: 30
+              unit_of_measurement: min
+              mode: box
+        tts_entity:
+          name: Text-to-speech (optional)
+          description: >
+            Announces when the living area was left on (never for the outdoor area, so stepping
+            outside late stays quiet). Needs speakers below.
+          default: ""
+          selector:
+            entity:
+              domain: tts
+        tts_target_entities:
+          name: Speakers (optional)
+          description: A speaker that's playing is spoken over.
+          default: []
+          selector:
+            entity:
+              domain: media_player
+              multiple: true
+        tts_message:
+          name: Announcement
+          default: Going to bed. Leaving the lights on for you.
+          selector:
+            text: {}
+
+mode: single
+max_exceeded: silent
+
+triggers:
+  - trigger: state
+    entity_id: !input bedtime_helper
+    to: "on"
+
+variables:
+  bedtime_helper: !input bedtime_helper
+  night_mode_helper: !input night_mode_helper
+  movie_mode_helper: !input movie_mode_helper
+  sweep_all_lights: !input sweep_all_lights
+  keep_on_lights: !input keep_on_lights
+  living_area_name: !input living_area_name
+  occupancy_entities: !input occupancy_entities
+  media_guard_entities: !input media_guard_entities
+  living_entities: !input living_entities
+  standby_source_entities: !input standby_source_entities
+  media_off_entities: !input media_off_entities
+  outdoor_area_name: !input outdoor_area_name
+  outdoor_override_entities: !input outdoor_override_entities
+  outdoor_door_entities: !input outdoor_door_entities
+  outdoor_recent_minutes: !input outdoor_recent_minutes
+  outdoor_first_entities: !input outdoor_first_entities
+  outdoor_feed_entities: !input outdoor_feed_entities
+  outdoor_other_entities: !input outdoor_other_entities
+  curtain_entities: !input curtain_entities
+  extra_off_entities: !input extra_off_entities
+  notify_action: !input notify_action
+  tts_entity: !input tts_entity
+  tts_targets: !input tts_target_entities
+  tts_message: !input tts_message
+  outdoor_last: "{{ outdoor_feed_entities + outdoor_other_entities }}"
+
+actions:
+  - alias: Turn the Bedtime helper back off
+    action: homeassistant.turn_off
+    target:
+      entity_id: "{{ bedtime_helper }}"
+
+  - alias: Turn off Movie time (or similar) and let it put the lights back
+    if:
+      - condition: template
+        value_template: "{{ movie_mode_helper | select('is_state', 'on') | list | count > 0 }}"
+    then:
+      - action: homeassistant.turn_off
+        target:
+          entity_id: "{{ movie_mode_helper }}"
+      - delay:
+          seconds: !input movie_settle_seconds
+
+  - alias: Day mode off
+    if:
+      - condition: template
+        value_template: "{{ night_mode_helper | length > 0 }}"
+    then:
+      - action: homeassistant.turn_off
+        target:
+          entity_id: "{{ night_mode_helper }}"
+  - delay:
+      seconds: !input settle_seconds
+
+  - alias: Check the areas and work out the sweep
+    variables:
+      living_busy: >
+        {{ (expand(occupancy_entities) | rejectattr('state', 'eq', 'off') | list | count > 0)
+           or (occupancy_entities | count > expand(occupancy_entities) | count)
+           or (expand(media_guard_entities) | selectattr('state', 'in', ['playing', 'paused'])
+               | list | count > 0) }}
+      outdoor_busy: >
+        {{ (expand(outdoor_override_entities) | selectattr('state', 'eq', 'on') | list | count > 0)
+           or (expand(outdoor_door_entities) | map(attribute='last_changed')
+               | select('gt', now() - timedelta(minutes=outdoor_recent_minutes | int(10)))
+               | list | count > 0) }}
+      sweep_lights: >
+        {% if sweep_all_lights %}
+          {% set protected = keep_on_lights + living_entities + outdoor_first_entities
+               + outdoor_feed_entities + outdoor_other_entities + extra_off_entities %}
+          {{ states.light | selectattr('state', 'eq', 'on') | map(attribute='entity_id')
+             | reject('in', protected) | list }}
+        {% else %}
+          []
+        {% endif %}
+
+  - alias: Every other light that's on
+    if:
+      - condition: template
+        value_template: "{{ sweep_lights | count > 0 }}"
+    then:
+      - action: light.turn_off
+        target:
+          entity_id: "{{ sweep_lights }}"
+
+  - alias: Living area, if nobody's there
+    if:
+      - condition: template
+        value_template: "{{ not living_busy }}"
+    then:
+      - if:
+          - condition: template
+            value_template: "{{ living_entities | count > 0 }}"
+        then:
+          - action: homeassistant.turn_off
+            target:
+              entity_id: "{{ living_entities }}"
+      - alias: TV and receiver, only if every standby source is asleep
+        if:
+          - condition: template
+            value_template: >
+              {% set srcs = expand(standby_source_entities) | list %}
+              {{ srcs | count > 0 and srcs | count >= standby_source_entities | count
+                 and srcs | rejectattr('state', 'in', ['standby', 'off']) | list | count == 0 }}
+          - condition: template
+            value_template: >
+              {{ expand(media_off_entities)
+                 | rejectattr('state', 'in', ['off', 'unavailable', 'unknown']) | list | count > 0 }}
+        then:
+          - action: homeassistant.turn_off
+            target:
+              entity_id: "{{ media_off_entities }}"
+
+  - alias: Outdoor area, if nobody's out
+    if:
+      - condition: template
+        value_template: "{{ not outdoor_busy }}"
+    then:
+      - if:
+          - condition: template
+            value_template: "{{ outdoor_first_entities | count > 0 }}"
+        then:
+          - action: homeassistant.turn_off
+            target:
+              entity_id: "{{ outdoor_first_entities }}"
+          - delay:
+              seconds: !input outdoor_feed_delay_seconds
+      - if:
+          - condition: template
+            value_template: "{{ outdoor_last | count > 0 }}"
+        then:
+          - action: homeassistant.turn_off
+            target:
+              entity_id: "{{ outdoor_last }}"
+
+  - alias: Always-off extras
+    if:
+      - condition: template
+        value_template: "{{ extra_off_entities | count > 0 }}"
+    then:
+      - action: homeassistant.turn_off
+        target:
+          entity_id: "{{ extra_off_entities }}"
+
+  - alias: Close only the curtains that are open
+    variables:
+      covers_to_close: >
+        {{ expand(curtain_entities) | rejectattr('state', 'in', ['closed', 'closing'])
+           | map(attribute='entity_id') | list }}
+  - if:
+      - condition: template
+        value_template: "{{ covers_to_close | count > 0 }}"
+    then:
+      - action: cover.close_cover
+        target:
+          entity_id: "{{ covers_to_close }}"
+
+  - choose: []
+    default: !input extra_actions
+
+  - alias: One notification if anything was left on
+    if:
+      - condition: template
+        value_template: "{{ (living_busy or outdoor_busy) and notify_action | trim | length > 0 }}"
+    then:
+      - variables:
+          skipped_text: >
+            {% set ns = namespace(parts=[]) %}
+            {% if living_busy %}{% set ns.parts = ns.parts + [living_area_name] %}{% endif %}
+            {% if outdoor_busy %}{% set ns.parts = ns.parts + [outdoor_area_name] %}{% endif %}
+            {{ ns.parts | join(' and ') }}
+      # The push goes first, so a speaker that fails to speak can't cost you the button.
+      - action: "{{ notify_action | trim }}"
+        data:
+          title: Good night
+          message: Left the {{ skipped_text }} lights on. Someone may still be up.
+          data:
+            tag: bedtime_routine
+            push:
+              interruption-level: !input interruption_level
+            actions:
+              - action: !input notification_action_id
+                title: Turn them off anyway
+
+  - alias: Announce, living area only
+    if:
+      - condition: template
+        value_template: >
+          {{ living_busy and tts_entity | length > 0 and tts_targets | count > 0 }}
+    then:
+      - action: tts.speak
+        continue_on_error: true
+        target:
+          entity_id: "{{ tts_entity }}"
+        data:
+          media_player_entity_id: "{{ tts_targets }}"
+          message: "{{ tts_message }}"
+
+  - if:
+      - condition: template
+        value_template: "{{ (living_busy or outdoor_busy) and notify_action | trim | length > 0 }}"
+    then:
+      - alias: Wait for the button
+        wait_for_trigger:
+          - trigger: event
+            event_type: mobile_app_notification_action
+            event_data:
+              action: !input notification_action_id
+        timeout:
+          minutes: !input force_off_wait_minutes
+        continue_on_timeout: true
+      - alias: Turn off what was left on
+        if:
+          - condition: template
+            value_template: "{{ wait.trigger is not none }}"
+        then:
+          - if:
+              - condition: template
+                value_template: "{{ living_busy and living_entities | count > 0 }}"
+            then:
+              - action: homeassistant.turn_off
+                target:
+                  entity_id: "{{ living_entities }}"
+          - if:
+              - condition: template
+                value_template: "{{ outdoor_busy }}"
+            then:
+              - if:
+                  - condition: template
+                    value_template: "{{ outdoor_first_entities | count > 0 }}"
+                then:
+                  - action: homeassistant.turn_off
+                    target:
+                      entity_id: "{{ outdoor_first_entities }}"
+                  - delay:
+                      seconds: !input outdoor_feed_delay_seconds
+              - if:
+                  - condition: template
+                    value_template: "{{ outdoor_last | count > 0 }}"
+                then:
+                  - action: homeassistant.turn_off
+                    target:
+                      entity_id: "{{ outdoor_last }}"
+      - alias: Clear the notification, tapped or not
+        action: "{{ notify_action | trim }}"
+        data:
+          message: clear_notification
+          data:
+            tag: bedtime_routine

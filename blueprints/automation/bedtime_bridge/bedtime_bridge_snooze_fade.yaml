@@ -1,0 +1,311 @@
+blueprint:
+  name: Bedtime Bridge snooze fade
+  description: >
+    Brings your bedside light(s) up slowly from near-dark to full while you snooze, and fades
+    them back down if you go back to sleep.
+
+
+    It follows the integration's Snooze helper (switch.bedtime_bridge_snooze, or your own
+    helper picked in the integration's options), which turns on when you snooze. Snoozing
+    again while it's already on changes nothing, so the fade just carries on.
+
+
+    The whole fade is one light command with a long transition, carried out by the bulb or its
+    hub, so a Home Assistant restart in the middle doesn't stop it. Lights that are off, or
+    dimmer than the start brightness, jump to the start brightness first; lights already
+    brighter fade up from where they are, so a lamp you were reading by doesn't drop first.
+
+
+    If the Snooze helper turns off while day mode is still off (you went back to sleep), the
+    lights fade back down. When day mode turns on, it clears the Snooze helper and leaves the
+    lights to your wake-up routine. A ceiling turns the helper off if it's stuck on, so the
+    next morning's fade still starts.
+
+
+    By default it only runs while the sun is down and for an hour after sunrise. Add a
+    sleep-in helper below to run it later on mornings when the curtains stay shut.
+
+
+    One automation per person: each with their own Snooze helper and lights.
+  domain: automation
+  source_url: https://github.com/2tk785fryr-tech/bedtime-bridge-homeassistant/blob/main/blueprints/automation/bedtime_bridge/bedtime_bridge_snooze_fade.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    core:
+      name: Snooze and lights
+      icon: mdi:weather-sunset-up
+      input:
+        trigger_helper:
+          name: Snooze helper
+          description: >
+            The helper picked as the Snooze helper in the Bedtime Bridge integration's options
+            (Bedtime Bridge's own is switch.bedtime_bridge_snooze). This automation turns it
+            off at the ceiling and when day mode starts.
+          selector:
+            entity:
+              domain:
+                - switch
+                - input_boolean
+        ramp_lights:
+          name: Lights to fade up
+          description: Your bedside light(s).
+          selector:
+            entity:
+              domain: light
+              multiple: true
+        awake_helper:
+          name: Day mode helper
+          description: >
+            On means you're up for the day (Bedtime Bridge's own is
+            switch.bedtime_bridge_awake_for_day). Only read: it tells "went back to sleep"
+            apart from the normal end of the morning.
+          selector:
+            entity:
+              domain:
+                - switch
+                - input_boolean
+                - binary_sensor
+    ramp:
+      name: The fade
+      icon: mdi:ramp-right
+      collapsed: true
+      input:
+        ramp_minutes:
+          name: Fade length
+          default: 10
+          selector:
+            number:
+              min: 1
+              max: 60
+              step: 1
+              unit_of_measurement: min
+              mode: slider
+        start_brightness_pct:
+          name: Start brightness
+          description: Where the fade begins. 1% is visible in a dark room without waking anyone.
+          default: 1
+          selector:
+            number:
+              min: 1
+              max: 50
+              step: 1
+              unit_of_measurement: "%"
+              mode: slider
+        end_brightness_pct:
+          name: End brightness
+          default: 100
+          selector:
+            number:
+              min: 1
+              max: 100
+              step: 1
+              unit_of_measurement: "%"
+              mode: slider
+        color_temp_kelvin:
+          name: Colour temperature
+          description: >
+            Set rather than kept, since a light that's off has no colour temperature to keep.
+            Must be within your bulbs' range.
+          default: 3000
+          selector:
+            number:
+              min: 2000
+              max: 6500
+              step: 50
+              unit_of_measurement: K
+              mode: slider
+        cancel_fade_seconds:
+          name: Fade-down length when you go back to sleep
+          default: 5
+          selector:
+            number:
+              min: 0
+              max: 60
+              step: 1
+              unit_of_measurement: s
+              mode: slider
+    gating:
+      name: When it runs
+      icon: mdi:gate
+      collapsed: true
+      input:
+        daylight_grace_minutes:
+          name: Stop this long after sunrise
+          description: >
+            It runs while the sun is down and for this many minutes after sunrise (the room is
+            still dim then). 0 = stop at sunrise.
+          default: 60
+          selector:
+            number:
+              min: 0
+              max: 240
+              step: 5
+              unit_of_measurement: min
+              mode: slider
+        override_when_on_entities:
+          name: Run anyway while these are on (optional)
+          description: >
+            Any of these reading on runs the fade whatever the time, e.g.
+            switch.bedtime_bridge_sleep_in, which keeps the curtains shut. Empty means the
+            sunrise cutoff always applies.
+          default: []
+          selector:
+            entity:
+              domain:
+                - switch
+                - input_boolean
+                - binary_sensor
+              multiple: true
+    ceiling:
+      name: Ceiling
+      icon: mdi:timer-alert
+      collapsed: true
+      input:
+        ceiling_minutes:
+          name: Turn the Snooze helper off after
+          description: >
+            If it's still on after this long, it's turned off (the lights fade down). Longer
+            than your longest run of snoozes.
+          default:
+            minutes: 60
+          selector:
+            duration:
+              enable_day: false
+        notify_action:
+          name: Tell me when the ceiling is reached (optional)
+          description: Your phone's notify action, e.g. notify.mobile_app_your_phone. Empty sends nothing.
+          default: ""
+          selector:
+            text: {}
+
+mode: queued
+max: 5
+max_exceeded: silent
+
+variables:
+  trigger_helper: !input trigger_helper
+  ramp_lights: !input ramp_lights
+  ramp_minutes: !input ramp_minutes
+  start_pct: !input start_brightness_pct
+  end_pct: !input end_brightness_pct
+  kelvin: !input color_temp_kelvin
+  cancel_fade: !input cancel_fade_seconds
+  grace_minutes: !input daylight_grace_minutes
+  override_entities: !input override_when_on_entities
+  notify_action: !input notify_action
+
+triggers:
+  - trigger: state
+    entity_id: !input trigger_helper
+    from: "off"
+    to: "on"
+    id: start
+  - trigger: state
+    entity_id: !input trigger_helper
+    from: "on"
+    to: "off"
+    id: cancel
+  - trigger: state
+    entity_id: !input trigger_helper
+    to: "on"
+    for: !input ceiling_minutes
+    id: ceiling
+  - trigger: state
+    entity_id: !input awake_helper
+    to: "on"
+    id: day_mode
+
+actions:
+  - choose:
+      # Start the fade.
+      - conditions:
+          - condition: trigger
+            id: start
+          - alias: Sun down, within the time after sunrise, or an override is on
+            condition: template
+            value_template: >
+              {% if override_entities | select('is_state', 'on') | list | count > 0
+                    or is_state('sun.sun', 'below_horizon') %}
+                true
+              {% else %}
+                {% set r = state_attr('sun.sun', 'next_rising') | as_datetime %}
+                {% if r is none %}
+                  true
+                {% else %}
+                  {% set r = r | as_local %}
+                  {% set r = r if r.date() == now().date() else r - timedelta(days=1) %}
+                  {{ now() <= r + timedelta(minutes=grace_minutes | int(0)) }}
+                {% endif %}
+              {% endif %}
+        sequence:
+          - variables:
+              snap_targets: >
+                {% set fl = (start_pct | float(1) * 2.55) | round(0) | int %}
+                {% set ns = namespace(items=[]) %}
+                {% for e in ramp_lights %}
+                  {% if not is_state(e, 'on') or (state_attr(e, 'brightness') | int(0)) < fl %}
+                    {% set ns.items = ns.items + [e] %}
+                  {% endif %}
+                {% endfor %}
+                {{ ns.items }}
+          - alias: Only the dark ones jump to the start brightness
+            if:
+              - condition: template
+                value_template: "{{ snap_targets | count > 0 }}"
+            then:
+              - action: light.turn_on
+                target:
+                  entity_id: "{{ snap_targets }}"
+                data:
+                  brightness_pct: "{{ start_pct | int(1) }}"
+                  color_temp_kelvin: "{{ kelvin | int(3000) }}"
+                  transition: 0
+          - alias: The whole fade in one command, carried out by the bulb
+            action: light.turn_on
+            target:
+              entity_id: "{{ ramp_lights }}"
+            data:
+              brightness_pct: "{{ end_pct | int(100) }}"
+              color_temp_kelvin: "{{ kelvin | int(3000) }}"
+              transition: "{{ (ramp_minutes | int(10)) * 60 }}"
+
+      # Went back to sleep: fade down.
+      - conditions:
+          - condition: trigger
+            id: cancel
+          - condition: state
+            entity_id: !input awake_helper
+            state: "off"
+        sequence:
+          - action: light.turn_off
+            target:
+              entity_id: "{{ ramp_lights }}"
+            data:
+              transition: "{{ cancel_fade | int(5) }}"
+
+      # Stuck on: turn it off (which fades the lights down through the branch above).
+      - conditions:
+          - condition: trigger
+            id: ceiling
+        sequence:
+          - action: homeassistant.turn_off
+            target:
+              entity_id: "{{ trigger_helper }}"
+          - if:
+              - condition: template
+                value_template: "{{ notify_action | trim | length > 0 }}"
+            then:
+              - action: "{{ notify_action | trim }}"
+                data:
+                  title: Snooze fade stopped
+                  message: The Snooze helper was still on after the ceiling, so it was turned off.
+
+      # Day mode started: clear the Snooze helper, leave the lights to the wake-up routine.
+      - conditions:
+          - condition: trigger
+            id: day_mode
+        sequence:
+          - action: homeassistant.turn_off
+            target:
+              entity_id: "{{ trigger_helper }}"

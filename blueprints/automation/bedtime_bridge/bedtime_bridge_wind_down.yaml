@@ -1,0 +1,189 @@
+blueprint:
+  name: Bedtime Bridge wind-down
+  description: >
+    Eases the house into the evening when the Bedtime Bridge app's wind-down starts: warm,
+    dim lights, and anything else you add.
+
+
+    It follows the integration's Winding down helper (picked in the integration's options).
+    The integration turns it on at wind-down while you're home, and off when you go to bed,
+    cancel the wind-down, or get into bed early.
+
+
+    By default it only dims lights that are already on, so it never lights up an empty room.
+    When the wind-down ends, your bedtime routine usually takes over, so it leaves the lights
+    alone unless you choose to put them back.
+  domain: automation
+  source_url: https://github.com/2tk785fryr-tech/bedtime-bridge-homeassistant/blob/main/blueprints/automation/bedtime_bridge/bedtime_bridge_wind_down.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    winding_down_helper:
+      name: Winding down helper
+      description: The helper picked as "Winding down helper" in the Bedtime Bridge integration's options.
+      selector:
+        entity:
+          domain:
+            - input_boolean
+            - switch
+            - binary_sensor
+    start:
+      name: When wind-down starts
+      icon: mdi:weather-night
+      input:
+        lights:
+          name: Dim these lights (optional)
+          default: []
+          selector:
+            entity:
+              domain: light
+              multiple: true
+        only_lights_on:
+          name: Only lights that are already on
+          description: Off turns every light above on, dimmed.
+          default: true
+          selector:
+            boolean: {}
+        brightness:
+          name: Brightness
+          default: 35
+          selector:
+            number:
+              min: 1
+              max: 100
+              unit_of_measurement: "%"
+        color_temp:
+          name: Warmth
+          description: Lower is warmer. 2200 K is candle-like; lights without colour temperature only dim.
+          default: 2200
+          selector:
+            color_temp:
+              unit: kelvin
+              min: 2000
+              max: 4000
+        transition:
+          name: Fade over
+          default: 60
+          selector:
+            number:
+              min: 0
+              max: 300
+              unit_of_measurement: s
+        covers:
+          name: Close these curtains or blinds (optional)
+          default: []
+          selector:
+            entity:
+              domain: cover
+              multiple: true
+        start_actions:
+          name: Also do this (optional)
+          description: For example quiet music, the TV volume down, or a thermostat setting.
+          default: []
+          selector:
+            action: {}
+    finish:
+      name: When wind-down ends
+      icon: mdi:bed
+      input:
+        end_behaviour:
+          name: The lights
+          description: >
+            Wind-down ends at go to bed (your bedtime routine takes over), when you cancel it,
+            or when you get into bed early.
+          default: leave
+          selector:
+            select:
+              options:
+                - label: Leave them (the bedtime routine takes over)
+                  value: leave
+                - label: Put them back the way they were
+                  value: restore
+        end_actions:
+          name: Also do this (optional)
+          default: []
+          selector:
+            action: {}
+
+mode: restart
+max_exceeded: silent
+
+triggers:
+  - trigger: state
+    entity_id: !input winding_down_helper
+    to: "on"
+    id: start
+  - trigger: state
+    entity_id: !input winding_down_helper
+    to: "off"
+    from: "on"
+    id: end
+
+variables:
+  lights: !input lights
+  only_lights_on: !input only_lights_on
+  covers: !input covers
+  end_behaviour: !input end_behaviour
+  # The lights chosen for this evening: all of them, or only those on now.
+  chosen: >
+    {{ lights | select('is_state', 'on') | list if only_lights_on else lights }}
+  snapshot_id: "{{ this.entity_id | replace('automation.', '') ~ '_before_wind_down' }}"
+  snapshot: "{{ 'scene.' ~ snapshot_id }}"
+
+actions:
+  - choose:
+      # ---- Wind-down started ----
+      - conditions:
+          - condition: trigger
+            id: start
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ (chosen + covers) | count > 0 }}"
+            then:
+              - action: scene.create
+                data:
+                  scene_id: "{{ snapshot_id }}"
+                  snapshot_entities: "{{ chosen + covers }}"
+          - if:
+              - condition: template
+                value_template: "{{ chosen | count > 0 }}"
+            then:
+              - action: light.turn_on
+                target:
+                  entity_id: "{{ chosen }}"
+                data:
+                  brightness_pct: !input brightness
+                  color_temp_kelvin: !input color_temp
+                  transition: !input transition
+          - if:
+              - condition: template
+                value_template: "{{ covers | count > 0 }}"
+            then:
+              - action: cover.close_cover
+                target:
+                  entity_id: "{{ covers }}"
+          - choose: []
+            default: !input start_actions
+
+      # ---- Wind-down ended ----
+      - conditions:
+          - condition: trigger
+            id: end
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ states[snapshot] is not none }}"
+            then:
+              - if:
+                  - condition: template
+                    value_template: "{{ end_behaviour == 'restore' }}"
+                then:
+                  - action: scene.turn_on
+                    target:
+                      entity_id: "{{ snapshot }}"
+              - action: scene.delete
+                target:
+                  entity_id: "{{ snapshot }}"
+          - choose: []
+            default: !input end_actions

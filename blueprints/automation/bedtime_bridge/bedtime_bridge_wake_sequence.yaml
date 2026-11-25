@@ -1,0 +1,269 @@
+blueprint:
+  name: Bedtime Bridge wake sequence
+  description: >
+    Your wake-up when you stop the alarm: day mode on, then the bedside lights, depending on
+    the sun, and without lighting up someone still asleep next to you.
+
+
+    It follows the integration's Stop helper (switch.bedtime_bridge_stop, or your own picked in
+    the integration's options), and the Early wake-up helper too if you add it. It turns day
+    mode on first, so everything that watches day mode starts before any light here moves,
+    then turns the Stop helper back off, so it works like a button.
+
+    - Before sunrise: the bedside lights come on. Sleep-in and the curtains are left alone,
+      so an early alarm doesn't open the curtains onto a dark morning.
+
+    - From sunrise until a while after (an hour by default): sleep-in is turned off and the
+      lights still come on (the room is still dim).
+
+    - Later than that: sleep-in is turned off and the lights are turned off, since daylight is
+      doing the job.
+
+
+    It never moves the curtains itself: turning sleep-in off lets whatever opens your curtains
+    do it on its own schedule, so the curtains keep one owner. Use "Also do this" for anything
+    else you want.
+
+
+    Partner-aware: "Always" lights come on regardless. "Partner-sensitive" lights (the other
+    side's lamp, a headboard light) are skipped while any of your "someone is asleep"
+    entities reads anything but off, so unavailable errs toward leaving them dark.
+
+
+    Nothing in it waits, so a restart can't leave it half done.
+  domain: automation
+  source_url: https://github.com/2tk785fryr-tech/bedtime-bridge-homeassistant/blob/main/blueprints/automation/bedtime_bridge/bedtime_bridge_wake_sequence.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    core:
+      name: The wake-up
+      icon: mdi:alarm-check
+      input:
+        trigger_helpers:
+          name: Wake helpers
+          description: >
+            The helpers picked as Stop helper (and, if you want, Early wake-up helper) in the
+            Bedtime Bridge integration's options; Bedtime Bridge's own are
+            switch.bedtime_bridge_stop and switch.bedtime_bridge_early_wake_up. Turned back off
+            straight away.
+          selector:
+            entity:
+              domain:
+                - switch
+                - input_boolean
+              multiple: true
+        awake_helper:
+          name: Day mode helper
+          description: >
+            Turned on first: on means somebody is up for the day (Bedtime Bridge's own is
+            switch.bedtime_bridge_awake_for_day).
+          selector:
+            entity:
+              domain:
+                - switch
+                - input_boolean
+        always_lights:
+          name: Always lights
+          description: >
+            Your bedside light(s): on whoever else is asleep, and off again in daylight.
+          selector:
+            entity:
+              domain: light
+              multiple: true
+    partner:
+      name: Someone else asleep
+      icon: mdi:sleep
+      collapsed: true
+      input:
+        partner_sensitive_lights:
+          name: Partner-sensitive lights (optional)
+          description: >
+            Skipped while someone is asleep, e.g. the other side's lamp and a light over the
+            whole bed. Empty: only the Always lights come on.
+          default: []
+          selector:
+            entity:
+              domain: light
+              multiple: true
+        partner_asleep_entities:
+          name: Someone is asleep when these are on (optional)
+          description: >
+            E.g. the other side's bed sensor, or a helper you turn on while a guest stays.
+            Anything but off counts as asleep. Empty: nobody counts as asleep.
+          default: []
+          selector:
+            entity:
+              multiple: true
+    lighting:
+      name: The lights
+      icon: mdi:lightbulb-on
+      collapsed: true
+      input:
+        wake_brightness_pct:
+          name: Brightness
+          default: 100
+          selector:
+            number:
+              min: 1
+              max: 100
+              step: 1
+              unit_of_measurement: "%"
+              mode: slider
+        wake_color_temp_kelvin:
+          name: Colour temperature
+          description: Match the snooze fade's, so the hand-over can't be seen.
+          default: 3000
+          selector:
+            number:
+              min: 2000
+              max: 6500
+              step: 50
+              unit_of_measurement: K
+              mode: slider
+        wake_transition_seconds:
+          name: Fade
+          description: Short, so it feels immediate.
+          default: 1
+          selector:
+            number:
+              min: 0
+              max: 30
+              step: 1
+              unit_of_measurement: s
+              mode: slider
+    sun:
+      name: Sun and sleep-in
+      icon: mdi:weather-sunset-up
+      collapsed: true
+      input:
+        daylight_grace_minutes:
+          name: Lights still come on this long after sunrise
+          description: After that they're turned off instead. Match the snooze fade's setting.
+          default: 60
+          selector:
+            number:
+              min: 0
+              max: 240
+              step: 5
+              unit_of_measurement: min
+              mode: slider
+        sleep_in_helpers:
+          name: Sleep-in helpers to turn off (optional)
+          description: >
+            Turned off after sunrise, never before. E.g. switch.bedtime_bridge_sleep_in, which
+            holds your curtains shut.
+          default: []
+          selector:
+            entity:
+              domain:
+                - switch
+                - input_boolean
+              multiple: true
+        extra_actions:
+          name: Also do this (optional)
+          description: Runs after the lights, e.g. a morning playlist or the coffee machine.
+          default: []
+          selector:
+            action: {}
+
+mode: single
+max_exceeded: silent
+
+variables:
+  awake_helper: !input awake_helper
+  always_lights: !input always_lights
+  partner_lights: !input partner_sensitive_lights
+  partner_entities: !input partner_asleep_entities
+  sleep_in_helpers: !input sleep_in_helpers
+  grace_minutes: !input daylight_grace_minutes
+  bright: !input wake_brightness_pct
+  kelvin: !input wake_color_temp_kelvin
+  fade: !input wake_transition_seconds
+  partner_asleep: "{{ partner_entities | reject('is_state', 'off') | list | count > 0 }}"
+  wake_lights: "{{ always_lights + ([] if partner_asleep else partner_lights) }}"
+
+triggers:
+  - trigger: state
+    entity_id: !input trigger_helpers
+    from: "off"
+    to: "on"
+
+actions:
+  - alias: Day mode first, so the house starts before any light moves
+    action: homeassistant.turn_on
+    target:
+      entity_id: "{{ awake_helper }}"
+  - alias: Turn the wake helper back off, it works like a button
+    action: homeassistant.turn_off
+    target:
+      entity_id: "{{ trigger.entity_id }}"
+  - choose:
+      # Before sunrise.
+      - conditions:
+          - condition: state
+            entity_id: sun.sun
+            state: below_horizon
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ wake_lights | count > 0 }}"
+            then:
+              - action: light.turn_on
+                target:
+                  entity_id: "{{ wake_lights }}"
+                data:
+                  brightness_pct: "{{ bright | int(100) }}"
+                  color_temp_kelvin: "{{ kelvin | int(3000) }}"
+                  transition: "{{ fade | int(1) }}"
+      # Sunrise to sunrise + the grace time.
+      - conditions:
+          - condition: template
+            value_template: >
+              {% set r = state_attr('sun.sun', 'next_rising') | as_datetime %}
+              {% if r is none %}
+                true
+              {% else %}
+                {% set r = r | as_local %}
+                {% set r = r if r.date() == now().date() else r - timedelta(days=1) %}
+                {{ now() <= r + timedelta(minutes=grace_minutes | int(0)) }}
+              {% endif %}
+        sequence:
+          - if:
+              - condition: template
+                value_template: "{{ sleep_in_helpers | count > 0 }}"
+            then:
+              - action: homeassistant.turn_off
+                target:
+                  entity_id: "{{ sleep_in_helpers }}"
+          - if:
+              - condition: template
+                value_template: "{{ wake_lights | count > 0 }}"
+            then:
+              - action: light.turn_on
+                target:
+                  entity_id: "{{ wake_lights }}"
+                data:
+                  brightness_pct: "{{ bright | int(100) }}"
+                  color_temp_kelvin: "{{ kelvin | int(3000) }}"
+                  transition: "{{ fade | int(1) }}"
+    # Later: daylight has it, clear anything the snooze fade left on.
+    default:
+      - if:
+          - condition: template
+            value_template: "{{ sleep_in_helpers | count > 0 }}"
+        then:
+          - action: homeassistant.turn_off
+            target:
+              entity_id: "{{ sleep_in_helpers }}"
+      - if:
+          - condition: template
+            value_template: "{{ (always_lights + partner_lights) | count > 0 }}"
+        then:
+          - action: light.turn_off
+            target:
+              entity_id: "{{ always_lights + partner_lights }}"
+            data:
+              transition: "{{ fade | int(1) }}"
+  - choose: []
+    default: !input extra_actions

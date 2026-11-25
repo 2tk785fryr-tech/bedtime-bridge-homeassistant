@@ -1,0 +1,75 @@
+blueprint:
+  name: Bedtime Bridge alarm event
+  description: >
+    Runs your actions when the Bedtime Bridge iPhone app reports an alarm event:
+    snoozed, stopped, planned, cancelled, or leave-by updated.
+
+    Use this instead of (or as well as) the snooze/stop helpers. Set the integration's
+    "When you snooze or stop an alarm" option to "Fire events only" or "Turn on helpers and
+    fire events". With "Turn on helpers only", snoozed/stopped events are not fired.
+
+    The event data is available to your actions as trigger.event.data, with keys type,
+    alarm_cause (your shift type's name, such as Days, or calendar / automade / noalarm), alarm_time, alarm_times,
+    label, leave_by and snooze_count. Good morning adds quiet (true when the other side of the
+    bed is occupied, integration 0.4.12): branch on trigger.event.data.quiet to skip the bedroom.
+
+    One instance per event type: for example "snoozed → start the light ramp" and
+    "stopped → run the wake sequence".
+  domain: automation
+  source_url: https://github.com/2tk785fryr-tech/bedtime-bridge-homeassistant/blob/main/blueprints/automation/bedtime_bridge/bedtime_bridge_alarm_event.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    event_type:
+      name: Event
+      default: snoozed
+      selector:
+        select:
+          options:
+            - label: Alarm snoozed
+              value: snoozed
+            - label: Alarm stopped
+              value: stopped
+            - label: Alarms planned at bedtime
+              value: planned
+            - label: Alarms cancelled
+              value: cancelled
+            - label: Leave-by time updated
+              value: leave_by
+            - label: Good morning on a morning with no alarms (quiet is true when the other side of the bed is occupied)
+              value: good_morning
+            - label: Morning briefing built (text, away and quiet in the event data)
+              value: morning_briefing
+            - label: Bedtime briefing built (text and away in the event data)
+              value: bedtime_briefing
+    causes:
+      name: Only for these causes (optional)
+      description: >
+        Leave empty to run for every alarm. Values are your shift types plus
+        calendar, automade and noalarm.
+      default: []
+      selector:
+        text:
+          multiple: true
+    actions:
+      name: Actions
+      selector:
+        action: {}
+
+mode: queued
+max_exceeded: silent
+
+triggers:
+  - trigger: event
+    event_type: bedtime_bridge
+    event_data:
+      type: !input event_type
+
+variables:
+  causes: !input causes
+
+conditions:
+  - condition: template
+    value_template: "{{ causes | count == 0 or trigger.event.data.alarm_cause in causes }}"
+
+actions: !input actions

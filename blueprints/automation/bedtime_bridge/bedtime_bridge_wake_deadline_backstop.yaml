@@ -1,0 +1,536 @@
+blueprint:
+  name: Bedtime Bridge wake deadline backstop
+  description: >
+    Steps in if you're still in bed as your get-up deadline nears and passes. Silent on
+    every normal morning: it only acts once the morning has already gone wrong (the alarm
+    was stopped and you fell back asleep, or the phone never rang).
+
+
+    The times come from the Bedtime Bridge integration's ladder (early, deadline and late,
+    set from your leave-by time), and it only runs while the ladder status reads "armed".
+
+    - Early, still in bed: a light comes up gently and a push.
+
+    - Deadline, still in bed: a critical push, an announcement on your speakers, lights to
+      full, then a reminder every few minutes until you're up (with a ceiling).
+
+    - Deadline, bed empty but you haven't left the bedroom: a plain push.
+
+    - Late, still haven't left the bedroom: a critical push and the announcement.
+
+
+    Getting up and leaving the bedroom (the exit latch turning on) stands it down; a latch
+    that turned on before your first alarm (a trip out in the night) is ignored once you're
+    back in bed. A bed sensor that reads unavailable counts as in bed, so a dropout
+    escalates instead of going quiet. On a day off with your own alarm and backstops on, the integration marks the
+    rungs gentle: every rung then only does what the early one does.
+
+
+    Each rung that acts tells the integration (bedtime_bridge_backstop_fired), so the app
+    shows it as Fired on Your morning and counts it in the weekly summary.
+  domain: automation
+  source_url: https://github.com/2tk785fryr-tech/bedtime-bridge-homeassistant/blob/main/blueprints/automation/bedtime_bridge/bedtime_bridge_wake_deadline_backstop.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    ladder:
+      name: The ladder (from Bedtime Bridge)
+      icon: mdi:stairs-up
+      input:
+        rung_early_sensor:
+          name: Early rung
+          description: Bedtime Bridge's "Ladder early" sensor.
+          selector:
+            entity:
+              filter:
+                - integration: bedtime_bridge
+                  domain: sensor
+                  device_class: timestamp
+        rung_deadline_sensor:
+          name: Deadline rung
+          description: Bedtime Bridge's "Ladder deadline" sensor.
+          selector:
+            entity:
+              filter:
+                - integration: bedtime_bridge
+                  domain: sensor
+                  device_class: timestamp
+        rung_late_sensor:
+          name: Late rung
+          description: Bedtime Bridge's "Ladder late" sensor.
+          selector:
+            entity:
+              filter:
+                - integration: bedtime_bridge
+                  domain: sensor
+                  device_class: timestamp
+        ladder_status_sensor:
+          name: Ladder status
+          description: >
+            Bedtime Bridge's "Ladder status" sensor. The backstop runs only while it reads
+            armed.
+          selector:
+            entity:
+              filter:
+                - integration: bedtime_bridge
+                  domain: sensor
+    evidence:
+      name: You and the bedroom
+      icon: mdi:bed
+      input:
+        bed_sensor:
+          name: Bed sensor (your side)
+          description: >
+            A bed occupancy sensor that reads on while you're in bed. Anything other than off
+            counts as in bed.
+          selector:
+            entity:
+              domain: binary_sensor
+        latch_helper:
+          name: Left-the-bedroom latch (optional)
+          description: >
+            On once you've left the bedroom this morning; that stands the whole ladder down.
+            Bedtime Bridge's own Exit latch switch (it follows your bedroom door sensor) or a
+            helper of yours. Leave empty to go by the bed sensor alone.
+          default: ""
+          selector:
+            entity:
+              domain:
+                - switch
+                - input_boolean
+                - binary_sensor
+        presence_entities:
+          name: Only when you're home (optional)
+          description: >
+            Away, or in any other zone, stops the ladder; unknown counts as home. Leave empty
+            to run whether you're home or not.
+          default: []
+          selector:
+            entity:
+              domain:
+                - person
+                - device_tracker
+              multiple: true
+    escalation:
+      name: What it does
+      icon: mdi:bullhorn
+      input:
+        notify_action:
+          name: Notify action
+          description: >
+            Your phone's mobile app notify action, e.g. notify.mobile_app_your_phone (not
+            notify.send_message, which drops the critical sound).
+          selector:
+            text: {}
+        ramp_lights:
+          name: Early-rung lights (optional)
+          description: Brought up gently at the early rung, e.g. a bedside lamp.
+          default: []
+          selector:
+            entity:
+              domain: light
+              multiple: true
+        alert_lights:
+          name: Deadline lights (optional)
+          description: Turned on to full at the deadline and late rungs.
+          default: []
+          selector:
+            entity:
+              domain: light
+              multiple: true
+        speakers:
+          name: Speakers (optional)
+          description: Where the announcement plays. Needs a text-to-speech entity below.
+          default: []
+          selector:
+            entity:
+              domain: media_player
+              multiple: true
+        tts_entity:
+          name: Text-to-speech (optional)
+          description: The text-to-speech entity that speaks the announcement.
+          default: ""
+          selector:
+            entity:
+              domain: tts
+        deadline_message:
+          name: Deadline announcement
+          default: It's past the time you needed to be up. You're going to be late.
+          selector:
+            text: {}
+        late_message:
+          name: Late announcement
+          default: You haven't left the bedroom and you're now late.
+          selector:
+            text: {}
+        extra_actions:
+          name: Also do this at the deadline and late rungs (optional)
+          description: For example open the curtains or play music. Runs after the announcement.
+          default: []
+          selector:
+            action: {}
+    settings:
+      name: Settings
+      icon: mdi:cog
+      collapsed: true
+      input:
+        override_entities:
+          name: Skip the ladder while any of these is on (optional)
+          description: >
+            Leave empty for none. Not Sleep In: sleeping in is exactly what this catches.
+          default: []
+          selector:
+            entity:
+              multiple: true
+        ramp_brightness_pct:
+          name: Early-rung brightness
+          default: 40
+          selector:
+            number:
+              min: 1
+              max: 100
+              unit_of_measurement: "%"
+              mode: slider
+        ramp_transition_seconds:
+          name: Early-rung fade
+          default: 60
+          selector:
+            number:
+              min: 0
+              max: 600
+              step: 10
+              unit_of_measurement: s
+              mode: slider
+        repeat_interval_minutes:
+          name: Reminder every
+          default: 3
+          selector:
+            number:
+              min: 1
+              max: 30
+              unit_of_measurement: min
+              mode: slider
+        max_repeats:
+          name: Up to this many reminders
+          description: Then a last notice, and it stops.
+          default: 8
+          selector:
+            number:
+              min: 1
+              max: 30
+              mode: slider
+        startup_settle_seconds:
+          name: After a restart, wait
+          description: Entities can read unavailable just after Home Assistant starts.
+          default: 90
+          selector:
+            number:
+              min: 0
+              max: 600
+              step: 10
+              unit_of_measurement: s
+              mode: slider
+        startup_window_minutes:
+          name: After a restart, catch up on a rung that passed within
+          description: So a restart later in the day doesn't replay the morning.
+          default: 60
+          selector:
+            number:
+              min: 0
+              max: 240
+              step: 15
+              unit_of_measurement: min
+              mode: slider
+
+# Parallel, so the late rung still runs while the deadline reminders are looping.
+mode: parallel
+
+variables:
+  bed_sensor: !input bed_sensor
+  latch_helper: !input latch_helper
+  presence_entities: !input presence_entities
+  rung_early_sensor: !input rung_early_sensor
+  rung_deadline_sensor: !input rung_deadline_sensor
+  rung_late_sensor: !input rung_late_sensor
+  override_entities: !input override_entities
+  ramp_lights: !input ramp_lights
+  alert_lights: !input alert_lights
+  speakers: !input speakers
+  tts_entity: !input tts_entity
+  notify_action: !input notify_action
+  max_repeats: !input max_repeats
+  startup_window_minutes: !input startup_window_minutes
+
+triggers:
+  - trigger: time
+    at: !input rung_early_sensor
+    id: early
+  - trigger: time
+    at: !input rung_deadline_sensor
+    id: deadline
+  - trigger: time
+    at: !input rung_late_sensor
+    id: late
+  - trigger: homeassistant
+    event: start
+    id: ha_start
+
+conditions:
+  # Counts matches, so an override entity that no longer exists can't suppress the ladder.
+  - alias: No override on
+    condition: template
+    value_template: "{{ expand(override_entities) | selectattr('state', 'eq', 'on') | list | count == 0 }}"
+  - alias: Ladder is armed
+    condition: state
+    entity_id: !input ladder_status_sensor
+    state: armed
+  - alias: Not away (unknown counts as home)
+    condition: template
+    value_template: >-
+      {{ expand(presence_entities)
+         | rejectattr('state', 'in', ['home', 'unknown', 'unavailable'])
+         | list | count == 0 }}
+
+actions:
+  - if:
+      - condition: trigger
+        id: ha_start
+    then:
+      - delay:
+          seconds: !input startup_settle_seconds
+
+  - variables:
+      # A time trigger acts on its own rung; after a restart, the latest rung that passed
+      # inside the catch-up window.
+      rung: >-
+        {%- if trigger.id in ['early', 'deadline', 'late'] -%}
+        {{- trigger.id -}}
+        {%- else -%}
+        {%- set w = startup_window_minutes * 60 -%}
+        {%- set ns = namespace(hit='none') -%}
+        {%- for name, ent in [('late', rung_late_sensor), ('deadline', rung_deadline_sensor), ('early', rung_early_sensor)] -%}
+        {%- if ns.hit == 'none' -%}
+        {%- set d = as_datetime(states(ent)) -%}
+        {%- if d is not none and d.tzinfo is not none -%}
+        {%- set age = (now() - d).total_seconds() -%}
+        {%- if age >= 0 and age <= w -%}{%- set ns.hit = name -%}{%- endif -%}
+        {%- endif -%}
+        {%- endif -%}
+        {%- endfor -%}
+        {{- ns.hit -}}
+        {%- endif -%}
+
+  - variables:
+      bed_occupied: "{{ states(bed_sensor) != 'off' }}"
+      has_latch: "{{ latch_helper not in [none, ''] }}"
+      # A latch that turned on before the first alarm (a trip out in the night) only counts
+      # while the bed is empty: back in bed, it doesn't stand the ladder down. Up and out after
+      # the first alarm counts even with the bed still reading occupied (a partner, a pet).
+      # The first alarm is the rungs' first_alarm attribute when it belongs to this morning
+      # (within 12 hours before the early rung); otherwise, or with an older integration, the
+      # early rung.
+      latch_counts: >-
+        {%- set l = states[latch_helper] if has_latch else none -%}
+        {%- set early = as_datetime(states(rung_early_sensor)) -%}
+        {%- set alarm = as_datetime(state_attr(rung_early_sensor, 'first_alarm') or '') -%}
+        {%- if early is none or early.tzinfo is none -%}{%- set first = none -%}
+        {%- elif alarm is not none and alarm.tzinfo is not none
+              and alarm >= early - timedelta(hours=12) -%}{%- set first = [alarm, early] | min -%}
+        {%- else -%}{%- set first = early -%}
+        {%- endif -%}
+        {%- if l is none or l.state != 'on' -%}false
+        {%- elif first is none or l.last_changed >= first -%}true
+        {%- else -%}{{ not bed_occupied }}
+        {%- endif -%}
+      never_exited: "{{ not latch_counts if has_latch else bed_occupied }}"
+      gentle: >-
+        {{ state_attr({'early': rung_early_sensor, 'deadline': rung_deadline_sensor,
+                       'late': rung_late_sensor}.get(rung, ''), 'firing') == 'gentle' }}
+      can_announce: "{{ tts_entity not in [none, ''] and speakers | count > 0 }}"
+
+  - choose:
+      - conditions:
+          - "{{ rung == 'none' }}"
+        sequence:
+          - stop: No rung in scope
+
+      # Early, still in bed: gentle light and a push.
+      - conditions:
+          - "{{ rung == 'early' and bed_occupied }}"
+        sequence:
+          - event: bedtime_bridge_backstop_fired
+            event_data:
+              rung: early
+              level: soft
+          - if:
+              - "{{ ramp_lights | count > 0 }}"
+            then:
+              - action: light.turn_on
+                target:
+                  entity_id: "{{ ramp_lights }}"
+                data:
+                  brightness_pct: !input ramp_brightness_pct
+                  transition: !input ramp_transition_seconds
+          - action: "{{ notify_action }}"
+            data:
+              title: Time to get up
+              message: >-
+                Still in bed. Deadline is
+                {{ as_datetime(states(rung_deadline_sensor)) | as_local | as_timestamp | timestamp_custom('%H:%M', true) }}.
+              data:
+                tag: wake_backstop
+
+      # Deadline, still in bed: everything, then reminders until the bed clears.
+      - conditions:
+          - "{{ rung == 'deadline' and bed_occupied and not gentle }}"
+        sequence:
+          - event: bedtime_bridge_backstop_fired
+            event_data:
+              rung: deadline
+              level: full
+          - if:
+              - "{{ alert_lights | count > 0 }}"
+            then:
+              - action: light.turn_on
+                target:
+                  entity_id: "{{ alert_lights }}"
+                data:
+                  brightness_pct: 100
+          - action: "{{ notify_action }}"
+            data:
+              title: You're going to be late
+              message: Deadline reached and you're still in bed.
+              data:
+                push:
+                  sound:
+                    name: default
+                    critical: 1
+                    volume: 1.0
+                tag: wake_backstop
+          - if:
+              - "{{ can_announce }}"
+            then:
+              - action: tts.speak
+                continue_on_error: true
+                target:
+                  entity_id: "{{ tts_entity }}"
+                data:
+                  media_player_entity_id: "{{ speakers }}"
+                  message: !input deadline_message
+          - choose: []
+            default: !input extra_actions
+          - repeat:
+              count: "{{ max_repeats }}"
+              sequence:
+                - delay:
+                    minutes: !input repeat_interval_minutes
+                - if:
+                    - "{{ states(bed_sensor) != 'off' }}"
+                  then:
+                    - action: "{{ notify_action }}"
+                      data:
+                        title: Still in bed
+                        message: "Reminder {{ repeat.index }} of {{ max_repeats }}."
+                        data:
+                          push:
+                            sound:
+                              name: default
+                              critical: 1
+                              volume: 1.0
+                          tag: wake_backstop
+                  else:
+                    - action: "{{ notify_action }}"
+                      data:
+                        message: clear_notification
+                        data:
+                          tag: wake_backstop
+                    - stop: Bed cleared
+          - action: "{{ notify_action }}"
+            data:
+              title: No further reminders
+              message: "{{ max_repeats }} reminders sent and you're still in bed. Stopping now."
+              data:
+                tag: wake_backstop
+
+      # Deadline, bed empty but the bedroom not left: the likeliest false alarm, so just a push.
+      - conditions:
+          - "{{ rung == 'deadline' and not bed_occupied and has_latch and never_exited }}"
+        sequence:
+          - event: bedtime_bridge_backstop_fired
+            event_data:
+              rung: deadline
+              level: soft
+          - action: "{{ notify_action }}"
+            data:
+              title: Have you started your day?
+              message: The bed reads empty but you haven't left the bedroom.
+              data:
+                tag: wake_backstop
+
+      # Late, still haven't left the bedroom: last ditch.
+      - conditions:
+          - "{{ rung == 'late' and never_exited and not gentle }}"
+        sequence:
+          - event: bedtime_bridge_backstop_fired
+            event_data:
+              rung: late
+              level: full
+          - if:
+              - "{{ alert_lights | count > 0 }}"
+            then:
+              - action: light.turn_on
+                target:
+                  entity_id: "{{ alert_lights }}"
+                data:
+                  brightness_pct: 100
+          - action: "{{ notify_action }}"
+            data:
+              title: You haven't left the bedroom
+              message: Past the deadline and you haven't left the bedroom.
+              data:
+                push:
+                  sound:
+                    name: default
+                    critical: 1
+                    volume: 1.0
+                tag: wake_backstop
+          - if:
+              - "{{ can_announce }}"
+            then:
+              - action: tts.speak
+                continue_on_error: true
+                target:
+                  entity_id: "{{ tts_entity }}"
+                data:
+                  media_player_entity_id: "{{ speakers }}"
+                  message: !input late_message
+          - choose: []
+            default: !input extra_actions
+
+      # Your own alarm with backstops on (gentle): later rungs do only what the early one does.
+      - conditions:
+          - "{{ gentle }}"
+          - "{{ (rung == 'deadline' and bed_occupied) or (rung == 'late' and never_exited) }}"
+        sequence:
+          - event: bedtime_bridge_backstop_fired
+            event_data:
+              rung: "{{ rung }}"
+              level: gentle
+          - if:
+              - "{{ ramp_lights | count > 0 }}"
+            then:
+              - action: light.turn_on
+                target:
+                  entity_id: "{{ ramp_lights }}"
+                data:
+                  brightness_pct: !input ramp_brightness_pct
+                  transition: !input ramp_transition_seconds
+          - action: "{{ notify_action }}"
+            data:
+              title: Time to get up
+              message: Your own alarm has passed and you haven't got up yet.
+              data:
+                tag: wake_backstop
+
+    default:
+      - stop: Nothing to escalate

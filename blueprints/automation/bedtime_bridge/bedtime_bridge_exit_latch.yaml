@@ -1,0 +1,172 @@
+blueprint:
+  name: Bedtime Bridge exit latch
+  description: >
+    Keeps one helper answering a single question: have you left the bedroom and stayed out?
+    The bedroom door opening turns it on; lying back in bed for a while turns it off again.
+
+
+    The Bedtime Bridge integration's own "Left the bedroom" switch
+    (switch.bedtime_bridge_exit_latch) already does the first half for you: it turns on when
+    your bedroom door sensor opens and off at bedtime. You don't need this blueprint for that.
+    This one is for people who want their own latch logic, with a return-to-bed reset: make a
+    toggle helper, pick it here, and pick it as "Use mine" for the left-the-bedroom latch in
+    the integration's options. Don't point this blueprint at the integration's own switch
+    (two writers make the latch meaningless).
+
+
+    Why a latch rather than the door's state: you might pull the door shut behind you on the
+    way out to let someone else sleep, and then it reads closed while you're up. Closing the
+    door doesn't undo the opening, so the latch stays on.
+
+
+    Why it clears when you go back to bed: a trip for a glass of water at 2 a.m. would
+    otherwise leave the latch on all night and stand down the morning backstop. What sets a
+    night-time trip apart isn't the hour, it's that you came back to bed and stayed there. The
+    wait (10 minutes by default) is long enough that sitting on the bed to get dressed doesn't
+    clear it, and short enough that falling back asleep does.
+
+
+    It also clears when someone else opened the door while you were already in bed, and after
+    a restart it turns on if the door is found open. A door that reads unavailable is never
+    treated as open, so a broken sensor can't silently stand down the backstop.
+  domain: automation
+  source_url: https://github.com/2tk785fryr-tech/bedtime-bridge-homeassistant/blob/main/blueprints/automation/bedtime_bridge/bedtime_bridge_exit_latch.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    core:
+      name: The bedroom
+      icon: mdi:door-open
+      input:
+        door_sensor:
+          name: Bedroom door sensor
+          description: On must mean open.
+          selector:
+            entity:
+              domain: binary_sensor
+        bed_sensor:
+          name: Bed sensor (your side)
+          description: A bed occupancy sensor that reads on while you're in bed.
+          selector:
+            entity:
+              domain: binary_sensor
+        latch_helper:
+          name: Latch helper
+          description: >
+            A toggle helper (or a switch) of your own that this automation turns on and off.
+            It must be the only thing that writes to it.
+          selector:
+            entity:
+              domain:
+                - input_boolean
+                - switch
+    settings:
+      name: Settings
+      icon: mdi:cog
+      collapsed: true
+      input:
+        return_to_bed_minutes:
+          name: Back in bed for this long clears the latch
+          description: >
+            Long enough that sitting on the bed to get dressed doesn't clear it, short enough
+            that going back to sleep does.
+          default: 10
+          selector:
+            number:
+              min: 2
+              max: 60
+              step: 1
+              unit_of_measurement: min
+              mode: slider
+        startup_settle_seconds:
+          name: Wait after a restart
+          description: >
+            Before reading the door after Home Assistant starts; sensors can read unavailable
+            for a moment.
+          default: 60
+          selector:
+            number:
+              min: 0
+              max: 600
+              step: 10
+              unit_of_measurement: s
+              mode: slider
+
+# queued, not single: a door opening during the restart wait must not be dropped. Each run is
+# one action, so the queue stays short.
+mode: queued
+max: 10
+max_exceeded: silent
+
+variables:
+  door_sensor: !input door_sensor
+  bed_sensor: !input bed_sensor
+  latch_helper: !input latch_helper
+
+triggers:
+  # The door opened: you left the room. The event, not the state: see the description.
+  - trigger: state
+    entity_id: !input door_sensor
+    to: "on"
+    id: exited
+  # Back in bed and stayed there: that was a trip, not the start of the day.
+  - trigger: state
+    entity_id: !input bed_sensor
+    to: "on"
+    for:
+      minutes: !input return_to_bed_minutes
+    id: returned
+  - trigger: homeassistant
+    event: start
+    id: ha_start
+  # The latch was set while you were already in bed (someone else opened the door): the bed
+  # never changed, so the trigger above can't fire. Watch the latch itself for the same wait.
+  - trigger: state
+    entity_id: !input latch_helper
+    to: "on"
+    for:
+      minutes: !input return_to_bed_minutes
+    id: latched_while_abed
+
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: exited
+        sequence:
+          - action: homeassistant.turn_on
+            target:
+              entity_id: "{{ latch_helper }}"
+      - conditions:
+          - condition: trigger
+            id: returned
+        sequence:
+          - action: homeassistant.turn_off
+            target:
+              entity_id: "{{ latch_helper }}"
+      # After a restart, one direction only: an open door means someone went through it. A
+      # closed door is ambiguous and is left alone (off makes the backstop escalate), and an
+      # unavailable door is not treated as open.
+      - conditions:
+          - condition: trigger
+            id: ha_start
+        sequence:
+          - delay:
+              seconds: !input startup_settle_seconds
+          - condition: template
+            value_template: "{{ is_state(door_sensor, 'on') }}"
+          - action: homeassistant.turn_on
+            target:
+              entity_id: "{{ latch_helper }}"
+      - conditions:
+          - condition: trigger
+            id: latched_while_abed
+          - condition: state
+            entity_id: !input bed_sensor
+            state: "on"
+            for:
+              minutes: !input return_to_bed_minutes
+        sequence:
+          - action: homeassistant.turn_off
+            target:
+              entity_id: "{{ latch_helper }}"

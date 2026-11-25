@@ -1,0 +1,980 @@
+"""Dynamic wind-down from tomorrow's first alarm (v0.4.3 item 5).
+
+Times come from tomorrow's FIRST alarm: what the phone has set, else its "Preview tomorrow"
+answer to RUN_PLAN_PREVIEW, else the shift calendar alone. Home Assistant runs the evening:
+the warning (with "15 min later" and "Cancel tonight's wind-down"), RUN_WIND_DOWN and the
+Winding down helper, the critical go to bed notification and the not-in-bed reminders.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+import logging
+from typing import TYPE_CHECKING, Any
+
+from homeassistant.core import Event, callback
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.event import async_track_point_in_utc_time, async_track_state_change_event
+from homeassistant.util import dt as dt_util
+
+from . import validate
+from . import timefmt
+from .helpers import writable
+from .const import (
+    CMD_PLAN_PREVIEW,
+    CMD_WIND_DOWN,
+    CMD_WIND_DOWN_CANCEL,
+    CONF_BED_SENSOR,
+    CONF_BEDROOM_DOOR,
+    CONF_NOTIFY,
+    CONF_PRESENCE,
+    CONF_SHIFT_SENSOR,
+    CONF_WIND_DOWN_HELPER,
+    CONF_WIND_DOWN_NOTIFY,
+    SHIFT_LEAD_PREFIX,
+    WIND_DOWN_ACTION_CANCEL,
+    WIND_DOWN_ACTION_LATER,
+)
+
+if TYPE_CHECKING:
+    from .bridge import BedtimeBridge
+
+_LOGGER = logging.getLogger(__name__)
+
+# The app's Settings → Wind-down, with its defaults (off until set up).
+DEFAULTS: dict[str, Any] = {
+    "enabled": False,
+    "sleep_goal_minutes": 390,
+    "length_minutes": 60,
+    "free_minutes": 30,
+    "minimum_minutes": 30,
+    "warning_minutes": 5,
+    "later_minutes": 15,
+    "reminders": True,
+    "reminder_first_minutes": 10,
+    "reminder_every_minutes": 10,
+    "reminder_stop_minutes": 60,
+    "preview_before_minutes": 120,
+    "preview_fallback": "18:00",
+    "own_alarm": True,
+    "start_hours": 2,
+}
+# Never send go to bed (critical) or a reminder this long after it was due (a restart, a late change).
+LATE_LIMIT = timedelta(minutes=15)
+STATUSES = ["scheduled", "winding_down", "bedtime", "cancelled", "off"]
+# The phone has this long to answer RUN_PLAN_PREVIEW before the shift calendar is used alone.
+PREVIEW_ANSWER_MINUTES = 10
+# Causes that aren't a morning of their own.
+NOT_MORNINGS = ("noalarm", "temporary", "nap", None, "")
+# v0.5.1 item 16: a night set up this soon after bedtime ran starts with bedtime ran; the bed
+# sensor's "on" counts as when you went to bed if it's this recent.
+BEDTIME_CARRIES = timedelta(hours=3)
+IN_BED_SINCE = timedelta(hours=3)
+# v0.5.5 item 29: a morning's alarms can be moved for this long after its first alarm without
+# counting as a new night.
+MORNING_UNDER_WAY = timedelta(hours=4)
+# v0.5.5 item 16: this long before wind-down Home Assistant asks the phone to check the evening
+# plan again (calendar and settings only; it plans again only if something changed).
+CHECK_BEFORE = timedelta(minutes=30)
+PLAN_CHECK_SIGNAL = "plan_check"
+
+
+@dataclass(frozen=True)
+class Times:
+    wind_down: datetime
+    go_to_bed: datetime
+
+
+def compute(
+    first_alarm: datetime, *, sleep_goal: int, length: int, free: int, minimum: int, home_at: datetime | None = None
+) -> Times:
+    """Go to bed = first alarm − sleep goal; wind-down = go to bed − length. Getting home late,
+    wind-down waits for home + free time and lasts at least `minimum`, so bedtime moves later
+    (less sleep) rather than cutting wind-down short."""
+    bed = first_alarm - timedelta(minutes=sleep_goal)
+    wind = bed - timedelta(minutes=length)
+    if home_at is not None:
+        wind = max(wind, home_at + timedelta(minutes=free))
+    bed = max(bed, wind + timedelta(minutes=minimum))
+    return Times(wind, bed)
+
+
+def short(when: datetime) -> str:
+    """8:50 (20:50 on a 24-hour clock, v0.4.7 item 10)"""
+    return timefmt.short(when)
+
+
+def long(when: datetime) -> str:
+    """7:00 AM (07:00 on a 24-hour clock)"""
+    return timefmt.long(when)
+
+
+class WindDown:
+    """Tonight's wind-down for one paired phone. State lives in bridge.state["wind_down"]."""
+
+    def __init__(self, bridge: BedtimeBridge) -> None:
+        self.bridge = bridge
+        self.hass = bridge.hass
+        self._unsubs: list[Callable[[], None]] = []
+        self._preview_unsub: Callable[[], None] | None = None
+        # The 10-minute wait for the phone's answer, kept apart so rescheduling can't drop it.
+        self._unanswered_unsub: Callable[[], None] | None = None
+
+    # MARK: State
+
+    @property
+    def s(self) -> dict[str, Any]:
+        return self.bridge.state.setdefault("wind_down", {"status": "off"})
+
+    @property
+    def settings(self) -> dict[str, Any]:
+        return {**DEFAULTS, **(self.bridge.state.get("wind_down_settings") or {})}
+
+    def summary(self) -> dict[str, Any]:
+        """For the app (context and replies) and the sensors."""
+        s = self.s
+        return {
+            "status": s.get("status", "off"),
+            "wind_down": s.get("wind_down"),
+            "go_to_bed": s.get("go_to_bed"),
+            "first_alarm": s.get("first_alarm"),
+            "source": s.get("source"),
+            "appointments_checked": s.get("checked", True),
+            "reminders_stopped": bool(s.get("reminders_stopped")),
+            "in_bed": self._in_bed(),
+            "bedtime_ran": bool(s.get("bedtime_ran")),
+            "went_to_bed": s.get("went_to_bed"),
+            "minutes_off_target": s.get("minutes_off"),
+        }
+
+    def _option(self, key: str) -> str | None:
+        return self.bridge.options.get(key) or None
+
+    def _now(self) -> datetime:
+        return dt_util.utcnow()
+
+    def _t(self, key: str) -> datetime | None:
+        value = self.s.get(key)
+        return dt_util.parse_datetime(value) if isinstance(value, str) else None
+
+    # MARK: Start
+
+    @callback
+    def async_start(self) -> None:
+        watched = [e for e in (self._option(CONF_BED_SENSOR), self._option(CONF_BEDROOM_DOOR)) if e]
+        if watched:
+            self.bridge.entry.async_on_unload(async_track_state_change_event(self.hass, watched, self._bedroom_changed))
+        presence = self.bridge.options.get(CONF_PRESENCE) or []
+        if isinstance(presence, str):
+            presence = [presence]
+        if presence:
+            self.bridge.entry.async_on_unload(async_track_state_change_event(self.hass, presence, self._presence_changed))
+        sensor = self._option(CONF_SHIFT_SENSOR)
+        if sensor:
+            self.bridge.entry.async_on_unload(async_track_state_change_event(self.hass, [sensor], self._shift_changed))
+        self.bridge.entry.async_on_unload(self.cancel_timers)
+        self.bridge.entry.async_on_unload(self.hass.bus.async_listen("mobile_app_notification_action", self._action))
+        self._reschedule()
+
+    @callback
+    def async_reschedule(self) -> None:
+        self._reschedule()
+
+    @callback
+    def cancel_timers(self) -> None:
+        for unsub in self._unsubs:
+            unsub()
+        self._unsubs = []
+        if self._preview_unsub:
+            self._preview_unsub()
+            self._preview_unsub = None
+        if self._unanswered_unsub:
+            self._unanswered_unsub()
+            self._unanswered_unsub = None
+
+    # MARK: Inputs
+
+    def adopt_settings(self, settings: dict[str, Any] | None) -> None:
+        if not isinstance(settings, dict) or not settings:
+            return
+        # v0.5.3 item 8: only valid values are stored.
+        new = validate.clean(settings, DEFAULTS, "wind-down setting")
+        if new == self.bridge.state.get("wind_down_settings"):
+            return
+        self.bridge.state["wind_down_settings"] = new
+        # Changed settings move tonight's times (or turn it on or off).
+        if self._t("first_alarm"):
+            self._retime()
+        else:
+            self._reschedule()
+        self.bridge._changed()
+
+    def adopt_shift_wake(self, wake: dict[str, Any] | None) -> None:
+        """v0.5.5 item 16: the app's fixed-time shifts, {"Late": "08:00"}; the others use their
+        minutes before (`shift_lead:`). A dict replaces what was kept (empty: none fixed)."""
+        if not isinstance(wake, dict):
+            return
+        clean: dict[str, str] = {}
+        for name, value in wake.items():
+            hour, _, minute = str(value).partition(":")
+            if isinstance(name, str) and name and hour.isdigit() and minute.isdigit() and int(hour) < 24 and int(minute) < 60:
+                clean[name] = f"{int(hour):02d}:{int(minute):02d}"
+        if clean == (self.bridge.state.get("shift_wake") or {}):
+            return
+        self.bridge.state["shift_wake"] = clean
+        self._reschedule()
+        self.bridge._changed()
+
+    def _shift_wake(self, kind: str) -> tuple[int, int] | None:
+        """A fixed wake-up time for this shift type, if the app plans it that way."""
+        for name, value in (self.bridge.state.get("shift_wake") or {}).items():
+            if name.casefold() == kind.casefold():
+                hour, _, minute = str(value).partition(":")
+                return int(hour), int(minute or 0)
+        return None
+
+    def plan_current(self, data: dict[str, Any]) -> None:
+        """v0.5.5 item 16: the phone checked before wind-down and nothing changed since the
+        evening plan: wind-down stays as it is."""
+        self.s["check_answered"] = self._now().isoformat()
+        _LOGGER.info("Bedtime Bridge: the plan check before wind-down found nothing changed (first alarm %s)",
+                     data.get("first_alarm") or self.s.get("first_alarm"))
+        self.bridge._changed()
+
+    async def _check(self) -> None:
+        """v0.5.5 item 16: shortly before wind-down, asks the phone (a quiet push) to check the
+        evening plan against the calendar and its settings. An app that doesn't know it ignores it."""
+        s = self.s
+        if s.get("status") != "scheduled" or s.get("source") != "preview" or s.get("check_sent_for") == s.get("first_alarm"):
+            return
+        s["check_sent_for"] = s.get("first_alarm")
+        s["check_sent_at"] = self._now().isoformat()
+        s["check_answered"] = None
+        await self.bridge.live.silent(PLAN_CHECK_SIGNAL)
+        self.bridge._changed()
+
+    def _counts(self, cause: str | None) -> bool:
+        """Shift mornings, wake-up events, and your own alarm when that setting is on."""
+        if cause in NOT_MORNINGS:
+            return False
+        if cause == "automade":
+            return bool(self.settings["own_alarm"])
+        return True
+
+    def refresh(self, *, moved: bool | None = None, moved_reason: str | None = None) -> None:
+        """After anything that may change tomorrow's first alarm (a plan, a change, a cancel)."""
+        state = self.bridge.state
+        times = sorted(t for t in (dt_util.parse_datetime(v) for v in state.get("alarm_times") or [] if isinstance(v, str)) if t)
+        first = next((t for t in times if t > self._now()), None)
+        if state.get("duty_night") or (first is not None and self.bridge.duty_morning(first)):
+            # v0.4.11 item 75: you sleep at work tonight, so no wind-down or bed reminders.
+            self._turn_off("duty night")
+        elif first is not None and self._counts(state.get("alarm_cause")):
+            if moved is not None:
+                self.s["moved"] = moved
+                self.s["moved_reason"] = moved_reason
+            self._set_first_alarm(first, source="alarms", cause=state.get("alarm_cause"), event=state.get("label"),
+                                  leave_by=state.get("leave_by"), checked=True)
+        elif self.s.get("source") == "alarms" or state.get("alarm_cause") in NOT_MORNINGS:
+            # The alarms went (cancel, skip, No alarms tomorrow): no wind-down tonight, whatever
+            # the times came from.
+            self._turn_off("no alarm")
+        self.bridge._changed()
+
+    def preview_answered(self, data: dict[str, Any]) -> None:
+        """The phone's "Preview tomorrow": first alarm, cause, event, leave-by."""
+        self.adopt_settings(data.get("wind_down_settings"))
+        self.s["preview_answered"] = self._now().isoformat()
+        if self._unanswered_unsub:
+            self._unanswered_unsub()
+            self._unanswered_unsub = None
+        if self.s.get("source") == "alarms" and self._t("first_alarm") and self._t("first_alarm") > self._now():
+            # Alarms already set win over a preview.
+            self._reschedule()
+            return
+        first = dt_util.parse_datetime(data["first_alarm"]) if isinstance(data.get("first_alarm"), str) else None
+        if first is None or not self._counts(data.get("cause")) or data.get("duty_night") or self.bridge.duty_morning(first):
+            self._turn_off("no alarm tomorrow")
+        else:
+            self.s["moved"] = bool(data.get("moved"))
+            self.s["moved_reason"] = data.get("moved_reason")
+            self._set_first_alarm(first, source="preview", cause=data.get("cause"), event=data.get("event"),
+                                  leave_by=data.get("leave_by"), checked=True, event_start=data.get("event_start"))
+        self.bridge._changed()
+
+    def _set_first_alarm(self, first: datetime, *, source: str, cause: str | None, event: str | None,
+                         leave_by: str | None, checked: bool, event_start: str | None = None) -> None:
+        s = self.s
+        if self.bridge.duty_morning(first):
+            # v0.4.11 item 75: whatever the times came from (alarms, preview or the calendar),
+            # the night before is a duty night.
+            self._turn_off("duty night")
+            return
+        night = dt_util.as_local(first).date().isoformat()
+        if self._morning_under_way(night):
+            # v0.5.5 item 29: this morning's alarms moved after its first alarm (Wake up later
+            # while snoozing): the night is already closed. It isn't a new night, so nothing is
+            # set up and "went to bed" isn't recorded again at the change.
+            return
+        new_night = s.get("night") != night
+        if new_night:
+            # A new night: start over (a cancel from last night doesn't carry).
+            self._close_night()
+            self.bridge.state["wind_down"] = s = {"status": "off", "night": night, "set_up_at": self._now().isoformat()}
+            if self._bedtime_ran_recently():
+                # v0.5.1 item 16: bedtime ran just before the plan arrived (the shortcut reports
+                # it, then sets the alarms): no wind-down, no reminders, it's Bedtime.
+                s.update(status="bedtime", bedtime_ran=True, bed_notified=True)
+        s.update(first_alarm=first.isoformat(), source=source, cause=cause, event=event, leave_by=leave_by,
+                 checked=checked, event_start=event_start)
+        self._retime()
+        if new_night and self._record_in_bed():
+            # v0.5.1 item 16: already in bed when the night is set up: no reminders.
+            self._reschedule()
+
+    def _morning_under_way(self, night: str) -> bool:
+        """v0.5.5 item 29: `night` (the first alarm's date) is the one whose morning began in the
+        last few hours: its first alarm's time came and the night was closed. A plan for a later
+        wake-up the same day (a night shift's evening alarm) comes after that and is a new night."""
+        s = self.s
+        closed = self._t("closed_at")
+        return (s.get("closed_night") == night and closed is not None
+                and timedelta(0) <= self._now() - closed <= MORNING_UNDER_WAY)
+
+    def _retime(self) -> None:
+        """Works the times out again; tells you once if wind-down is running and go to bed moved."""
+        s = self.s
+        first = self._t("first_alarm")
+        if first is None or not self.settings["enabled"]:
+            self._turn_off("wind-down off" if first else "no alarm")
+            return
+        cfg = self.settings
+        times = compute(first, sleep_goal=int(cfg["sleep_goal_minutes"]), length=int(cfg["length_minutes"]),
+                        free=int(cfg["free_minutes"]), minimum=int(cfg["minimum_minutes"]), home_at=self._home_at())
+        planned = compute(first, sleep_goal=int(cfg["sleep_goal_minutes"]), length=int(cfg["length_minutes"]),
+                          free=int(cfg["free_minutes"]), minimum=int(cfg["minimum_minutes"]))
+        # v0.4.11 item 12: "later" counts from the planned wind-down; getting home late can only
+        # push it later, not stack on top.
+        wind = max(planned.wind_down + timedelta(minutes=int(s.get("later_minutes") or 0)), times.wind_down)
+        wind = min(wind, times.go_to_bed - timedelta(minutes=int(cfg["minimum_minutes"])))
+        # v0.4.11 item 41: Go to bed later holds tonight's bedtime (and a scheduled wind-down) later.
+        bed_later = self._t("bed_later_to")
+        if bed_later is not None and bed_later > times.go_to_bed:
+            wind = wind + (bed_later - times.go_to_bed)
+            times = Times(times.wind_down, bed_later)
+        old_bed = self._t("go_to_bed")
+        status = s.get("status", "off")
+        now = self._now()
+        if status in ("off", "scheduled") and times.go_to_bed <= now:
+            if status == "off" and now - times.go_to_bed < timedelta(minutes=int(cfg["reminder_stop_minutes"])):
+                # v0.5.1 item 16: a late plan, still in tonight's bedtime: straight to Bedtime
+                # (no wind-down, no go to bed notification); the reminders run unless you're in bed.
+                s.update(status="bedtime", wind_down=None, go_to_bed=times.go_to_bed.isoformat(), bed_notified=True)
+                self._reschedule()
+                return
+            # Go to bed already passed (a change in the morning, or a late plan): nothing tonight.
+            s.update(status="off", wind_down=None, go_to_bed=times.go_to_bed.isoformat(), bed_notified=True, reminders_stopped=True)
+            self._reschedule()
+            return
+        if status in ("off", "scheduled"):
+            s["status"] = "scheduled"
+            # v0.5.1 item 16: wind-down's time already past when the plan arrives: it doesn't
+            # start; it goes straight to go to bed.
+            s["wind_down"] = wind.isoformat() if wind > now else None
+        elif status == "winding_down":
+            # It carries on; only go to bed moves.
+            pass
+        s["go_to_bed"] = times.go_to_bed.isoformat()
+        if status == "winding_down" and old_bed and abs((old_bed - times.go_to_bed).total_seconds()) >= 60:
+            self.hass.async_create_task(self._notify(
+                "New bedtime", f"Go to bed at {short(times.go_to_bed)} · first alarm {short(first)}", tag="wind_down_moved"))
+            self.hass.async_create_task(self._live())
+        self._reschedule()
+
+    def _home_at(self) -> datetime | None:
+        """When you got home this evening, if that's later than the usual wind-down allows for."""
+        value = self.s.get("home_at")
+        return dt_util.parse_datetime(value) if isinstance(value, str) else None
+
+    def _turn_off(self, why: str) -> None:
+        s = self.s
+        if s.get("status") == "winding_down":
+            self.hass.async_create_task(self._helper(False))
+            self.hass.async_create_task(self.bridge._command(CMD_WIND_DOWN_CANCEL))
+            self.hass.async_create_task(self.bridge.live.end_wind_down())
+        if s.get("status") not in ("off", None):
+            s["status"] = "off"
+            s["off_reason"] = why
+        s["wind_down"] = None
+        s["go_to_bed"] = None
+        s["first_alarm"] = None
+        s["source"] = None
+        self._reschedule()
+
+    # MARK: Timers
+
+    @callback
+    def _reschedule(self) -> None:
+        for unsub in self._unsubs:
+            unsub()
+        self._unsubs = []
+        now = self._now()
+        s = self.s
+        status = s.get("status", "off")
+        wind, bed, first = self._t("wind_down"), self._t("go_to_bed"), self._t("first_alarm")
+
+        def at(when: datetime | None, action: Callable[[], Any]) -> None:
+            if when is not None and when > now:
+                self._unsubs.append(async_track_point_in_utc_time(self.hass, callback(lambda _n: self.hass.async_create_task(action())), when))
+
+        if status == "scheduled" and wind:
+            warning = int(self.settings["warning_minutes"] or 0)
+            if warning and s.get("warned_for") != s.get("wind_down"):
+                at(self._warning_time(wind, warning), self._warn)
+            if wind <= now < (bed or wind):
+                self.hass.async_create_task(self._start())
+            else:
+                at(wind, self._start)
+            # v0.5.5 item 16: the check before wind-down, once per evening plan.
+            if s.get("source") == "preview" and s.get("check_sent_for") != s.get("first_alarm"):
+                at(wind - CHECK_BEFORE, self._check)
+        if status in ("scheduled", "winding_down") and bed:
+            if bed <= now and not s.get("bed_notified"):
+                if now - bed <= LATE_LIMIT:
+                    self.hass.async_create_task(self._go_to_bed())
+                else:
+                    # Too late to say so (Home Assistant was down): it's bedtime, quietly.
+                    s.update(status="bedtime", bed_notified=True)
+                    self.hass.async_create_task(self._helper(False))
+            else:
+                at(bed, self._go_to_bed)
+        reminding = self.settings["reminders"] and not (s.get("reminders_stopped") or s.get("bedtime_ran") or s.get("went_to_bed"))
+        if status in ("scheduled", "winding_down", "bedtime") and bed and reminding:
+            at(self._next_reminder(now), self._remind)
+        if first:
+            # The morning: tonight is over.
+            at(first, self._morning)
+        if status in ("off", "cancelled") or first is None:
+            self._schedule_preview()
+
+    def _warning_time(self, wind: datetime, warning: int) -> datetime | None:
+        """The warning time before wind-down. v0.4.11 item 16: after "15 min later" there's always
+        one before the new start, 1 min after the press if the warning time is already past."""
+        when = wind - timedelta(minutes=warning)
+        moved = self._t("later_at")
+        if moved is not None and when < moved + timedelta(minutes=1):
+            when = moved + timedelta(minutes=1)
+            if when >= wind:
+                return None
+        return when
+
+    def _at_latest(self) -> bool:
+        """Wind-down is up against go to bed − the minimum: no more "later"."""
+        wind, bed = self._t("wind_down"), self._t("go_to_bed")
+        if wind is None or bed is None:
+            return False
+        return wind + timedelta(minutes=int(self.settings["minimum_minutes"])) >= bed - timedelta(seconds=1)
+
+    def _schedule_preview(self) -> None:
+        """RUN_PLAN_PREVIEW. v0.5.5 item 16: always at one evening time (`preview_fallback`,
+        18:00), so the phone plans in full and wind-down comes from the real first alarm. Only
+        when the wind-down the shift calendar gives would start less than preview-before (2 h)
+        after that time (a very early shift) does it go earlier: preview-before that wind-down."""
+        if self._preview_unsub:
+            self._preview_unsub()
+            self._preview_unsub = None
+        if not self.settings["enabled"]:
+            return
+        now = self._now()
+        hour, _, minute = str(self.settings["preview_fallback"]).partition(":")
+        local = dt_util.as_local(now).replace(hour=int(hour), minute=int(minute or 0), second=0, microsecond=0)
+        when = dt_util.as_utc(local)
+        if when <= now and self.s.get("preview_sent_day") == dt_util.as_local(now).date().isoformat():
+            when = dt_util.as_utc(local + timedelta(days=1))
+        early = self._calendar_preview_time(now)
+        if early is not None and early < when and not self._preview_covers(early):
+            when = early
+        if self.s.get("preview_sent_for") == when.isoformat():
+            self._arm_unanswered()
+            return
+        if when <= now:
+            # Missed (HA restarted): ask now if it's still the evening before.
+            if now - when < timedelta(hours=4):
+                self.hass.async_create_task(self._preview(when))
+            return
+        self._preview_unsub = async_track_point_in_utc_time(
+            self.hass, callback(lambda _n: self.hass.async_create_task(self._preview(when))), when)
+
+    def _preview_covers(self, when: datetime) -> bool:
+        """A past early preview time that a preview already sent this evening covers (sent at
+        most preview-before ahead of it), so it isn't asked for twice."""
+        sent = self._t("preview_sent_at")
+        if when > self._now() or sent is None:
+            return False
+        return sent >= when - timedelta(minutes=int(self.settings["preview_before_minutes"]))
+
+    def _calendar_estimate(self, now: datetime) -> tuple[datetime, str] | None:
+        """Tomorrow's first alarm from the shift calendar alone: next shift start − its lead, or
+        (v0.5.5 item 16) the shift's fixed wake-up time on its day when the app plans it so."""
+        sensor = self.hass.states.get(self._option(CONF_SHIFT_SENSOR) or "")
+        start = dt_util.parse_datetime(sensor.attributes.get("next_shift_start") or "") if sensor else None
+        if start is None or not now < start < now + timedelta(hours=36):
+            return None
+        kind = sensor.attributes.get("next_shift_type") or "Days"
+        fixed = self._shift_wake(kind)
+        if fixed is not None:
+            wake = dt_util.as_local(start).replace(hour=fixed[0], minute=fixed[1], second=0, microsecond=0)
+            if wake < start:
+                return dt_util.as_utc(wake), kind
+        lead = self.bridge.setting_value(f"{SHIFT_LEAD_PREFIX}{kind}") or 120
+        return start - timedelta(minutes=int(lead)), kind
+
+    def _calendar_preview_time(self, now: datetime) -> datetime | None:
+        estimate = self._calendar_estimate(now)
+        if estimate is None:
+            return None
+        cfg = self.settings
+        times = compute(estimate[0], sleep_goal=int(cfg["sleep_goal_minutes"]), length=int(cfg["length_minutes"]),
+                        free=int(cfg["free_minutes"]), minimum=int(cfg["minimum_minutes"]))
+        return times.wind_down - timedelta(minutes=int(cfg["preview_before_minutes"]))
+
+    def _next_reminder(self, now: datetime) -> datetime | None:
+        """Every reminder_every after go to bed (or after you got up again), first after
+        reminder_first, for reminder_stop."""
+        s, cfg = self.s, self.settings
+        start = self._t("reminders_from") or self._t("go_to_bed")
+        if start is None:
+            return None
+        first, every, stop = (int(cfg[k]) for k in ("reminder_first_minutes", "reminder_every_minutes", "reminder_stop_minutes"))
+        sent = int(s.get("reminders_sent") or 0)
+        when = start + timedelta(minutes=first + every * sent)
+        # Missed slots (a restart) are skipped, not sent in a burst.
+        while when < now - timedelta(seconds=30):
+            when += timedelta(minutes=every)
+        if when > start + timedelta(minutes=stop):
+            return None
+        return max(when, now + timedelta(seconds=1))
+
+    # MARK: The evening
+
+    async def _preview(self, when: datetime) -> None:
+        self.s["preview_sent_for"] = when.isoformat()
+        self.s["preview_sent_day"] = dt_util.as_local(self._now()).date().isoformat()
+        self.s["preview_sent_at"] = self._now().isoformat()
+        self.s["preview_answered"] = None
+        await self.bridge._command(CMD_PLAN_PREVIEW)
+        self.bridge._changed()
+        self._arm_unanswered()
+
+    @callback
+    def _arm_unanswered(self) -> None:
+        """Waits PREVIEW_ANSWER_MINUTES for the phone (also after a restart)."""
+        sent = self._t("preview_sent_at")
+        if sent is None or self.s.get("preview_answered") or self._unanswered_unsub:
+            return
+        due = sent + timedelta(minutes=PREVIEW_ANSWER_MINUTES)
+        if due <= self._now():
+            self.hass.async_create_task(self._preview_unanswered())
+            return
+        self._unanswered_unsub = async_track_point_in_utc_time(
+            self.hass, callback(lambda _n: self.hass.async_create_task(self._preview_unanswered())), due)
+
+    async def _preview_unanswered(self) -> None:
+        """No answer: the shift calendar alone, and the warning says appointments weren't checked."""
+        self._unanswered_unsub = None
+        if self.s.get("preview_answered"):
+            return
+        self.s["preview_answered"] = "unanswered"
+        if self.s.get("source") in ("alarms", "preview") and (self._t("first_alarm") or self._now()) > self._now():
+            return
+        estimate = self._calendar_estimate(self._now())
+        if estimate is None:
+            return
+        self.s["moved"] = False
+        self._set_first_alarm(estimate[0], source="calendar", cause=estimate[1], event=estimate[1], leave_by=None, checked=False)
+        self.bridge._changed()
+
+    async def _warn(self) -> None:
+        s = self.s
+        wind, bed = self._t("wind_down"), self._t("go_to_bed")
+        if s.get("status") != "scheduled" or wind is None or bed is None:
+            return
+        s["warned_for"] = s.get("wind_down")
+        unchecked = "" if s.get("checked", True) else " (appointments not checked)"
+        # v0.4.11 item 9: after "15 min later", the next warning says it moved, so it can't read as
+        # wind-down starting at the old time.
+        moved = bool(s.get("later_minutes"))
+        actions = [{"action": WIND_DOWN_ACTION_CANCEL, "title": "Cancel tonight's wind-down", "destructive": True}]
+        if not self._at_latest():
+            # v0.4.11 item 16: the last possible move offers Cancel only.
+            actions.insert(0, {"action": WIND_DOWN_ACTION_LATER, "title": f"{int(self.settings['later_minutes'])} min later"})
+        await self._notify(
+            "Wind-down moved" if moved else "Wind-down soon",
+            f"Wind-down {'moved to' if moved else 'at'} {short(wind)} · bed {short(bed)}{unchecked}", tag="wind_down_warning",
+            actions=actions,
+        )
+        self.bridge._changed()
+
+    async def start_now(self) -> bool:
+        """"Start wind-down now" (app, control, Siri): everything wind-down does, right away;
+        go to bed unchanged."""
+        bed, wind, now = self._t("go_to_bed"), self._t("wind_down"), self._now()
+        if self.s.get("status") not in ("scheduled", "cancelled") or bed is None:
+            return False
+        # Only from start_hours before go to bed, and not once go to bed has passed.
+        if not bed - timedelta(hours=int(self.settings["start_hours"])) <= now < bed:
+            return False
+        if self.s.get("status") == "cancelled":
+            self.s["reminders_stopped"] = False
+        self.s["status"] = "scheduled"
+        self.s["wind_down"] = self._now().isoformat()
+        await self._start()
+        return True
+
+    async def _start(self) -> None:
+        s = self.s
+        if s.get("status") != "scheduled":
+            return
+        s["status"] = "winding_down"
+        s["started_at"] = self._now().isoformat()
+        # v0.5.1 item 16: already in bed when wind-down starts.
+        self._record_in_bed()
+        if self.bridge.is_home():
+            await self._helper(True)
+        await self.bridge._command(CMD_WIND_DOWN)
+        first = self._t("first_alarm")
+        # An event morning, or a first alarm moved from its usual time: say so once.
+        if first and (s.get("cause") == "calendar" or s.get("moved")):
+            unchecked = "" if s.get("checked", True) else " (appointments not checked)"
+            if s.get("cause") == "calendar":
+                start = dt_util.parse_datetime(s.get("event_start") or "")
+                what = f"{s.get('event') or 'Appointment'}" + (f" at {long(start)} tomorrow" if start else " tomorrow")
+            else:
+                why = f" ({s.get('moved_reason')})" if s.get("moved_reason") else ""
+                what = f"{s.get('event') or s.get('cause')} tomorrow{why}"
+            leave = dt_util.parse_datetime(s.get("leave_by") or "")
+            parts = [what] + ([f"leave by {short(leave)}"] if leave else []) + [f"first alarm {short(first)}"]
+            await self._notify("Tomorrow", " · ".join(parts) + unchecked, tag="wind_down_tomorrow")
+        self.bridge._event("wind_down_started", wind_down=s.get("wind_down"), go_to_bed=s.get("go_to_bed"))
+        self._reschedule()
+        await self._live()
+
+    async def later(self) -> None:
+        """"15 min later": moves wind-down, not go to bed, never below the minimum."""
+        s = self.s
+        if s.get("status") != "scheduled":
+            return
+        # v0.4.11 item 9: once for each warning. A second one for the same warning (a second tap,
+        # or the phone replaying the action) does nothing.
+        warning = s.get("warned_for")
+        if warning is not None and s.get("later_for") == warning:
+            _LOGGER.info("Bedtime Bridge: wind-down already moved for the %s warning; ignored", warning)
+            return
+        if self._at_latest():
+            return
+        s["later_for"] = warning
+        s["later_at"] = self._now().isoformat()
+        s["later_minutes"] = int(s.get("later_minutes") or 0) + int(self.settings["later_minutes"])
+        # The warning comes again before the new time, as "moved" (v0.4.11 item 16).
+        self._retime()
+        self.bridge._changed()
+        # The app shows the new time straight away.
+        await self.bridge.live.silent("wind_down_changed")
+
+    async def bed_later(self, minutes: int) -> dict[str, Any]:
+        """v0.4.11 item 41: Go to bed later. Moves tonight's go to bed (and a wind-down still to
+        come) later by `minutes`, with the bedtime reminders. The alarms don't move. At Time for
+        bed, wind-down carries on until the new time."""
+        s = self.s
+        status = s.get("status")
+        bed = self._t("go_to_bed")
+        if status not in ("scheduled", "winding_down", "bedtime") or bed is None or s.get("bedtime_ran") or s.get("went_to_bed"):
+            return {"moved": False}
+        now = self._now()
+        new_bed = max(bed, now) + timedelta(minutes=minutes)
+        delta = new_bed - bed
+        s["bed_later_to"] = new_bed.isoformat()
+        s["go_to_bed"] = new_bed.isoformat()
+        if status == "scheduled" and (wind := self._t("wind_down")) is not None:
+            s["wind_down"] = (wind + delta).isoformat()
+        if status == "bedtime":
+            s["status"] = "winding_down"
+            if self.bridge.is_home():
+                await self._helper(True)
+        s.update(bed_notified=False, reminders_from=None, reminders_sent=0)
+        await self._clear("wind_down_bed")
+        self._reschedule()
+        self.bridge._changed()
+        self.bridge._event("wind_down_bed_later", go_to_bed=new_bed.isoformat(), minutes=minutes)
+        await self._live()
+        return {"moved": True, "go_to_bed": new_bed.isoformat()}
+
+    async def cancel(self) -> None:
+        """Tonight's wind-down off: helper off, no go to bed notification or reminders."""
+        s = self.s
+        if s.get("status") == "bedtime":
+            # v0.4.11 item 48: at Time for bed, Cancel wind-down stops the reminders.
+            self.stop_reminders()
+            return
+        if s.get("status") not in ("scheduled", "winding_down"):
+            return
+        was_running = s.get("status") == "winding_down"
+        s["status"] = "cancelled"
+        s["reminders_stopped"] = True
+        if was_running:
+            await self._helper(False)
+        await self.bridge._command(CMD_WIND_DOWN_CANCEL)
+        await self._clear("wind_down_warning")
+        await self.bridge.live.end_wind_down()
+        self.bridge._event("wind_down_cancelled")
+        self._reschedule()
+
+    async def _go_to_bed(self) -> None:
+        s = self.s
+        if s.get("status") not in ("scheduled", "winding_down") or s.get("bed_notified"):
+            return
+        s["bed_notified"] = True
+        first = self._t("first_alarm")
+        if self.bridge.is_home():
+            await self._helper(False)
+        if not self._in_bed():
+            # Critical: it's the one that has to get through. No buttons, no phone command
+            # (the bedtime shortcut turns Sleep Focus on, which replaces Wind Down).
+            await self._notify("Time for bed", f"Time for bed · first alarm {short(first)}" if first else "Time for bed",
+                               tag="wind_down_bed", critical=True)
+        s["status"] = "bedtime"
+        await self.bridge.live.end_wind_down()
+        # Plug in your phone at go to bed too (v0.4.3 item 10).
+        await self.bridge.charge_check()
+        self.bridge._event("wind_down_go_to_bed", go_to_bed=s.get("go_to_bed"))
+        self._reschedule()
+
+    async def _remind(self) -> None:
+        s = self.s
+        if s.get("reminders_stopped") or s.get("bedtime_ran") or s.get("went_to_bed") or not self.settings["reminders"]:
+            return
+        bed = self._t("go_to_bed")
+        if bed is None or self._now() < bed:
+            self._reschedule()
+            return
+        if self._in_bed():
+            # v0.5.1 item 16: in bed: you went to bed, and the reminders stop (no more quiet ones).
+            self._record_in_bed()
+            self.bridge._changed()
+            self._reschedule()
+            return
+        s["reminders_sent"] = int(s.get("reminders_sent") or 0) + 1
+        # Away overnight: no reminders. In bed: nothing to say.
+        if self.bridge.is_home() and not self._in_bed():
+            first = self._t("first_alarm")
+            await self._notify("Still up", f"Still up · first alarm {short(first)}" if first else "Still up",
+                               tag="wind_down_reminder", time_sensitive=True)
+        self.bridge._changed()
+        self._reschedule()
+
+    def stop_reminders(self) -> None:
+        self.s["reminders_stopped"] = True
+        self.bridge._changed()
+        self._reschedule()
+
+    async def bedtime_ran(self) -> None:
+        """Into bed (the bedtime shortcut): before or during wind-down it ends there (helper
+        off, nothing more); after go to bed the reminders stop."""
+        s = self.s
+        s["bedtime_ran"] = True
+        # v0.5.1 item 16: kept outside the night, so a plan that arrives just after (a new night)
+        # still knows bedtime ran.
+        self.bridge.state["bedtime_ran_at"] = self._now().isoformat()
+        status = s.get("status")
+        if status == "winding_down":
+            await self._helper(False)
+            await self.bridge.live.end_wind_down()
+        if status in ("scheduled", "winding_down", "bedtime"):
+            s["status"] = "bedtime"
+            s["bed_notified"] = True
+        self._reschedule()
+        self.bridge._changed()
+
+    def bedtime_undone(self) -> None:
+        """Not ready for bed / undo bedtime: wind-down doesn't restart; only the reminders run,
+        from go to bed (or from now, if that's past)."""
+        s = self.s
+        self.bridge.state.pop("bedtime_ran_at", None)
+        if s.get("status") != "bedtime" or self._t("go_to_bed") is None:
+            return
+        s["bedtime_ran"] = False
+        s["reminders_stopped"] = False
+        bed = self._t("go_to_bed")
+        if bed <= self._now():
+            s["reminders_from"] = self._now().isoformat()
+            s["reminders_sent"] = 0
+        self._reschedule()
+
+    async def _morning(self) -> None:
+        night = self.s.get("night")
+        self._close_night()
+        # v0.5.5 item 29: which night just ended and when, so a change to this same morning's
+        # alarms doesn't start it again.
+        self.bridge.state["wind_down"] = {"status": "off", "closed_night": night, "closed_at": self._now().isoformat()}
+        self.bridge._changed()
+        self._reschedule()
+
+    def _close_night(self) -> None:
+        """Keeps last night in history (went to bed vs target) for the weekly summary."""
+        s = self.s
+        if not s.get("go_to_bed") or s.get("recorded"):
+            return
+        s["recorded"] = True
+        history = self.bridge.state.setdefault("wind_down_history", [])
+        history.append({
+            "night": s.get("night"), "go_to_bed": s.get("go_to_bed"), "went_to_bed": s.get("went_to_bed"),
+            "minutes_off": s.get("minutes_off"), "cancelled": s.get("status") == "cancelled",
+        })
+        # 9 weeks of nights: this week and 8 earlier ones (v0.4.6 item 5).
+        del history[:-64]
+
+    # MARK: Bedroom and presence
+
+    def _in_bed(self) -> bool:
+        """Bedroom door closed AND bed occupied (either missing counts as not known: in bed)."""
+        bed = self.hass.states.get(self._option(CONF_BED_SENSOR) or "")
+        door = self.hass.states.get(self._option(CONF_BEDROOM_DOOR) or "")
+        bed_on = bed is not None and bed.state == "on"
+        door_closed = door is None or door.state == "off"
+        return bed_on and door_closed
+
+    def _bedtime_ran_recently(self) -> bool:
+        """v0.5.1 item 16: bedtime ran in the last 3 hours."""
+        value = self.bridge.state.get("bedtime_ran_at")
+        ran = dt_util.parse_datetime(value) if isinstance(value, str) else None
+        return ran is not None and timedelta(0) <= self._now() - ran <= BEDTIME_CARRIES
+
+    def _record_in_bed(self) -> bool:
+        """v0.5.1 item 16: in bed (bed occupied, door closed) and not yet recorded: went to bed is
+        when the bed sensor turned on, if that's in the last 3 hours, otherwise now; the minutes
+        against go to bed come from that."""
+        s = self.s
+        if s.get("went_to_bed") or not self._in_bed():
+            return False
+        now = self._now()
+        when = now
+        bed_state = self.hass.states.get(self._option(CONF_BED_SENSOR) or "")
+        since = bed_state.last_changed if bed_state is not None else None
+        if since is not None and timedelta(0) <= now - since <= IN_BED_SINCE:
+            when = since
+        s["went_to_bed"] = when.isoformat()
+        target = self._t("go_to_bed")
+        if target:
+            s["minutes_off"] = round((when - target).total_seconds() / 60)
+        return True
+
+    @callback
+    def _bedroom_changed(self, _event: Event) -> None:
+        s = self.s
+        # v0.5.1 item 16: a night whose wind-down never started counts from when it was set up.
+        started = self._t("started_at") or self._t("wind_down") or self._t("set_up_at")
+        if s.get("went_to_bed") or started is None or self._now() < started or not self._in_bed():
+            return
+        if self._record_in_bed():
+            self.bridge._changed()
+            self._reschedule()
+
+    @callback
+    def _presence_changed(self, event: Event) -> None:
+        new, old = event.data.get("new_state"), event.data.get("old_state")
+        # v0.4.11 item 12: only arriving counts, never a location update while already home.
+        if new is None or new.state != "home" or old is None or old.state in ("home", "unknown", "unavailable"):
+            return
+        s = self.s
+        wind = self._t("wind_down")
+        if s.get("status") == "scheduled" and wind is not None and self._now() + timedelta(minutes=int(self.settings["free_minutes"])) > wind:
+            # Home late: wind-down waits for home + free time, then lasts at least the minimum.
+            s["home_at"] = self._now().isoformat()
+            self._retime()
+            self.bridge._changed()
+
+    @callback
+    def _shift_changed(self, _event: Event) -> None:
+        source = self.s.get("source")
+        if source == "calendar" and self.s.get("status") in ("scheduled", "winding_down"):
+            # Times from the calendar alone follow it: a changed or deleted shift moves or ends them.
+            estimate = self._calendar_estimate(self._now())
+            if estimate is None:
+                self._turn_off("shift gone")
+            else:
+                self._set_first_alarm(estimate[0], source="calendar", cause=estimate[1], event=estimate[1], leave_by=None, checked=False)
+            self.bridge._changed()
+        elif source is None:
+            self._reschedule()
+
+    @callback
+    def _action(self, event: Event) -> None:
+        action = event.data.get("action")
+        if action == WIND_DOWN_ACTION_LATER:
+            self.hass.async_create_task(self.later())
+        elif action == WIND_DOWN_ACTION_CANCEL:
+            self.hass.async_create_task(self.cancel())
+
+    # MARK: Effects
+
+    async def _helper(self, on: bool) -> None:
+        helper = self._option(CONF_WIND_DOWN_HELPER)
+        if not writable(helper):
+            return  # none, or a binary sensor (only read; v0.5.4 item 35)
+        state = self.hass.states.get(helper)
+        if state is not None and state.state == ("on" if on else "off"):
+            return
+        try:
+            await self.hass.services.async_call("homeassistant", "turn_on" if on else "turn_off", {"entity_id": helper})
+        except HomeAssistantError as err:
+            _LOGGER.warning("Bedtime Bridge couldn't turn %s %s: %s", helper, "on" if on else "off", err)
+
+    async def _live(self) -> None:
+        """The wind-down Live Activity by push (with an Apple push key)."""
+        bed = self._t("go_to_bed")
+        if self.s.get("status") == "winding_down" and bed and bed > self._now():
+            await self.bridge.live.wind_down(bed, self._t("first_alarm"))
+
+    async def turn_helper_off(self) -> None:
+        await self._helper(False)
+
+    def _notify_service(self) -> tuple[str, str] | None:
+        notify = (self._option(CONF_WIND_DOWN_NOTIFY) or self._option(CONF_NOTIFY) or "").strip()
+        if not notify:
+            return None
+        domain, _, service = notify.partition(".")
+        return domain, service
+
+    async def _notify(self, title: str, message: str, *, tag: str, actions: list[dict[str, Any]] | None = None,
+                      critical: bool = False, time_sensitive: bool = False, url: str | None = None) -> None:
+        target = self._notify_service()
+        if target is None:
+            return
+        data: dict[str, Any] = {"tag": f"bedtime_bridge_{tag}"}
+        if actions:
+            data["actions"] = actions
+        if url:
+            data["url"] = url
+        # Settings → Notifications in the app picks each one's level; the flags are the defaults.
+        default = "critical" if critical else "time_sensitive" if time_sensitive else "normal"
+        level = (self.bridge.state.get("notification_levels") or {}).get(tag, default)
+        if level == "critical":
+            data["push"] = {"sound": {"name": "default", "critical": 1, "volume": 1.0}, "interruption-level": "critical"}
+        elif level == "time_sensitive":
+            data["push"] = {"interruption-level": "time-sensitive"}
+        try:
+            await self.hass.services.async_call(target[0], target[1], {"title": title, "message": message, "data": data})
+        except HomeAssistantError as err:
+            _LOGGER.warning("Bedtime Bridge couldn't send %s: %s", title, err)
+            return
+        # v0.5.4 item 81: sent again, so an owed clear for its tag would remove this one.
+        self.bridge.clears.drop(data["tag"])
+
+    async def _clear(self, tag: str) -> None:
+        target = self._notify_service()
+        if target is None:
+            return
+        # v0.5.4 item 77: owed until the phone is reachable.
+        await self.bridge.clears.send(f"bedtime_bridge_{tag}", f"{target[0]}.{target[1]}")

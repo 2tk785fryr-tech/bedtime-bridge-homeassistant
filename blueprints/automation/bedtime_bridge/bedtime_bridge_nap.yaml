@@ -1,0 +1,214 @@
+blueprint:
+  name: Bedtime Bridge nap
+  description: >
+    Makes a room ready for a nap when you start one in the Bedtime Bridge app, and puts it
+    back when the nap ends.
+
+
+    It follows the integration's Napping helper (picked in the integration's options), which
+    is only turned on for a nap you start while you're home. Add room sensors (an occupancy,
+    presence or bed sensor in that room) to act only when you're actually napping there: a nap
+    on the couch leaves the bedroom curtains alone. If you're not in the room yet, it waits a
+    few minutes for you to get there.
+
+
+    When the nap ends it can put the curtains and lights back the way they were, open the
+    curtains (in daylight only), or leave them.
+
+
+    Make one automation per room, for example "Bedroom nap: close the curtains".
+  domain: automation
+  source_url: https://github.com/2tk785fryr-tech/bedtime-bridge-homeassistant/blob/main/blueprints/automation/bedtime_bridge/bedtime_bridge_nap.yaml
+  homeassistant:
+    min_version: "2024.10.0"
+  input:
+    napping_helper:
+      name: Napping helper
+      description: The helper picked as "Napping helper" in the Bedtime Bridge integration's options.
+      selector:
+        entity:
+          domain:
+            - input_boolean
+            - switch
+            - binary_sensor
+    room:
+      name: The room
+      icon: mdi:bed
+      input:
+        room_sensors:
+          name: Only when I'm in this room (optional)
+          description: >
+            Sensors that show you're napping in this room; any one of them on counts. For a
+            bedroom, both sides of the bed sensor are best (a nap on either side counts, and a
+            nap on the couch doesn't). Presence (mmWave) sensors work too; plain motion sensors
+            go off while you lie still. Leave empty to act wherever you nap.
+          default: []
+          selector:
+            entity:
+              domain: binary_sensor
+              multiple: true
+        wait_minutes:
+          name: Wait this long for me to get to the room
+          description: If you start the nap before you're in the room. 0 = only if already there.
+          default: 5
+          selector:
+            number:
+              min: 0
+              max: 30
+              unit_of_measurement: min
+    start:
+      name: When the nap starts
+      icon: mdi:power-sleep
+      input:
+        covers:
+          name: Close these curtains or blinds (optional)
+          default: []
+          selector:
+            entity:
+              domain: cover
+              multiple: true
+        lights_off:
+          name: Turn off these lights (optional)
+          default: []
+          selector:
+            entity:
+              domain: light
+              multiple: true
+        start_actions:
+          name: Also do this (optional)
+          description: For example a white-noise playlist, a fan, or a thermostat setting.
+          default: []
+          selector:
+            action: {}
+    finish:
+      name: When the nap ends
+      icon: mdi:weather-sunny
+      input:
+        end_behaviour:
+          name: The curtains and lights
+          default: restore
+          selector:
+            select:
+              options:
+                - label: Put them back the way they were
+                  value: restore
+                - label: Open the curtains (daylight only), leave the lights off
+                  value: open
+                - label: Leave them as they are
+                  value: leave
+        end_actions:
+          name: Also do this (optional)
+          default: []
+          selector:
+            action: {}
+
+mode: restart
+max_exceeded: silent
+
+triggers:
+  - trigger: state
+    entity_id: !input napping_helper
+    to: "on"
+    id: start
+  - trigger: state
+    entity_id: !input napping_helper
+    to: "off"
+    from: "on"
+    id: end
+
+variables:
+  room_sensors: !input room_sensors
+  wait_minutes: !input wait_minutes
+  covers: !input covers
+  lights_off: !input lights_off
+  end_behaviour: !input end_behaviour
+  # Where the room was before the nap, so it can be put back. One per automation.
+  snapshot_id: "{{ this.entity_id | replace('automation.', '') ~ '_before_nap' }}"
+  snapshot: "{{ 'scene.' ~ snapshot_id }}"
+
+actions:
+  - choose:
+      # ---- Nap started ----
+      - conditions:
+          - condition: trigger
+            id: start
+        sequence:
+          # Only in this room: already there, or there within the wait. Templates, so an
+          # empty sensor list never fails the automation's check; "stop" ends the whole run
+          # (a failed condition inside a nested step would only end that step).
+          - if:
+              - condition: template
+                value_template: >
+                  {{ room_sensors | count > 0 and wait_minutes | int(0) > 0
+                     and room_sensors | select('is_state', 'on') | list | count == 0 }}
+            then:
+              - wait_template: "{{ room_sensors | select('is_state', 'on') | list | count > 0 }}"
+                timeout:
+                  minutes: "{{ wait_minutes | int(0) }}"
+                continue_on_timeout: true
+          - if:
+              - condition: template
+                value_template: >
+                  {{ room_sensors | count > 0
+                     and room_sensors | select('is_state', 'on') | list | count == 0 }}
+            then:
+              - stop: Not napping in this room
+          # Remember how the room was, then get it ready.
+          - if:
+              - condition: template
+                value_template: "{{ (covers + lights_off) | count > 0 }}"
+            then:
+              - action: scene.create
+                data:
+                  scene_id: "{{ snapshot_id }}"
+                  snapshot_entities: "{{ covers + lights_off }}"
+          - if:
+              - condition: template
+                value_template: "{{ covers | count > 0 }}"
+            then:
+              - action: cover.close_cover
+                target:
+                  entity_id: "{{ covers }}"
+          - if:
+              - condition: template
+                value_template: "{{ lights_off | count > 0 }}"
+            then:
+              - action: light.turn_off
+                target:
+                  entity_id: "{{ lights_off }}"
+          - choose: []
+            default: !input start_actions
+
+      # ---- Nap ended ----
+      - conditions:
+          - condition: trigger
+            id: end
+        sequence:
+          # Only undo what this automation did (it saved the room when it acted).
+          - if:
+              - condition: template
+                value_template: "{{ states[snapshot] is not none }}"
+            then:
+              - choose:
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ end_behaviour == 'restore' }}"
+                    sequence:
+                      - action: scene.turn_on
+                        target:
+                          entity_id: "{{ snapshot }}"
+                  - conditions:
+                      - condition: template
+                        value_template: "{{ end_behaviour == 'open' and covers | count > 0 }}"
+                      - condition: state
+                        entity_id: sun.sun
+                        state: above_horizon
+                    sequence:
+                      - action: cover.open_cover
+                        target:
+                          entity_id: "{{ covers }}"
+              - action: scene.delete
+                target:
+                  entity_id: "{{ snapshot }}"
+          - choose: []
+            default: !input end_actions
