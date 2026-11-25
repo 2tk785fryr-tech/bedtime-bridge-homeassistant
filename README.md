@@ -10,7 +10,7 @@ your calendar and sets your wake-up alarms. This integration lets your house tak
 down and go to bed, turns switches on and off for your own automations, and works out a backstop
 ladder that steps in with lights and speakers if you're still in bed when you should be up.
 
-This repo holds only the latest version of the integration (**0.4.12.6**), plus generic
+This repo holds only the latest version of the integration (**0.4.12.8**), plus generic
 blueprints you can import with one tap.
 
 ---

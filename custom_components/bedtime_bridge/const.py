@@ -5,7 +5,7 @@ EVENT = "bedtime_bridge"
 
 # v0.5.2 item 11: this integration's version (the same as manifest.json) and the lowest app
 # version it needs. Each release sets them. An app that sends no version is from before 0.5.2.
-INTEGRATION_VERSION = "0.4.12.6"
+INTEGRATION_VERSION = "0.4.12.8"
 MIN_APP_VERSION = "0.5.0"
 APP_VERSION_BEFORE_CHECK = "0.5.1"
 ISSUE_APP_OUTDATED = "app_outdated"

@@ -105,6 +105,8 @@ async def change(bridge: BedtimeBridge, data: dict[str, Any]) -> dict[str, Any]:
 async def save(bridge: BedtimeBridge, report: dict[str, Any]) -> dict[str, Any]:
     """One report. `screenshot` (base64 PNG) is saved next to the file, not in it."""
     report = dict(report)
+    # v0.5.5 item 43: the file name is always Home Assistant's own, never the phone's.
+    report.pop("screenshot_file", None)
     now = dt_util.utcnow()
     report.setdefault("time", now.isoformat())
     report.setdefault("received", now.isoformat())

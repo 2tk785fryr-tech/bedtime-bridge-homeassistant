@@ -16,7 +16,7 @@
           "shift_sensor_entity": "Shift sensor (checks next_shift_start)",
           "weather_entity": "Weather forecast",
           "shift_types": "Shift types (comma separated, as they appear in calendar titles)",
-          "ladder_shift_types": "Backstop ladder for these shift types",
+          "ladder_shift_types": "Leave-by backstops for these shift types",
           "calendar_entity": "Work calendar",
           "restart_automations": "Restart when a morning changes",
           "clear_notification_tags": "Phone notifications to clear",
@@ -55,12 +55,12 @@
           "shift_types": "Each one gets a lead-time setting, and its name is sent as the alarm cause.",
           "home_only": "Snooze, stop and Start Bedtime Routine skip the helpers and wake events while you're away. If your location is unknown, you count as home.",
           "bedtime_helper": "Turned on by the app's Start Bedtime Routine action (e.g. input_boolean.bedtime_routine).",
-          "ladder_shift_types": "Shift mornings that get the leave-by backstop ladder (early, deadline, late before leave-by). Appointments with a location always get one.",
+          "ladder_shift_types": "Shift mornings that get the leave-by backstops (early, deadline, late before leave-by). Appointments with a location always get one.",
           "calendar_entity": "Read to tell a first day back (no shift the day before) when the phone hasn't planned.",
           "restart_automations": "When you move or cancel a morning's alarms, these automations are turned off and back on, which stops anything they're running (a reminder loop, say). Leave empty for none.",
           "clear_notification_tags": "Optional, comma-separated: the tags of your own phone notifications (from your automations) to clear when a morning's alarms move or are cancelled, and at bedtime (e.g. bedtime_nudge). The backstop's own is always cleared. In Low Power Mode each clear is sent again once the phone is reachable.",
-          "house_backstop_source": "What the wake deadline backstop fires on: the Bedtime Bridge ladder, or your own rung sensors (for setups from before the ladder). The app shows those times.",
-          "old_rung_sensors": "Your own template's early, deadline and late timestamp sensors, in that order (for setups from before the Bedtime Bridge ladder).",
+          "house_backstop_source": "What the wake deadline backstop fires on: Bedtime Bridge's backstops, or your own sensors (for setups from before Bedtime Bridge's backstops). The app shows those times.",
+          "old_rung_sensors": "Your own template's early, deadline and late timestamp sensors, in that order (for setups from before Bedtime Bridge's backstops).",
           "notify_service": "e.g. notify.mobile_app_your_phone. Used for the re-plan notification and phone commands.",
           "replan_alert": "If the shift override or your next shift changes after you planned (and before you wake), send a notification with a Re-plan button.",
           "bed_sensor": "With the helper below, tells the app whether you're really up when you stop an alarm, so it keeps the later alarms if you're still in bed. Empty only counts after a minute (the sensor drops out briefly).",
@@ -245,13 +245,13 @@
           "house_backstop_source": "House backstop reads",
           "old_rung_sensors": "Old template's rung sensors",
           "restart_automations": "Restart when a morning changes",
-          "ladder_shift_types": "Backstop ladder for these shift types"
+          "ladder_shift_types": "Leave-by backstops for these shift types"
         },
         "data_description": {
-          "house_backstop_source": "What the wake deadline backstop fires on: the Bedtime Bridge ladder, or your own rung sensors (for setups from before the ladder). The app shows those times.",
-          "old_rung_sensors": "Your own template's early, deadline and late timestamp sensors, in that order (for setups from before the Bedtime Bridge ladder).",
+          "house_backstop_source": "What the wake deadline backstop fires on: Bedtime Bridge's backstops, or your own sensors (for setups from before Bedtime Bridge's backstops). The app shows those times.",
+          "old_rung_sensors": "Your own template's early, deadline and late timestamp sensors, in that order (for setups from before Bedtime Bridge's backstops).",
           "restart_automations": "When you move or cancel a morning's alarms, these automations are turned off and back on, which stops anything they're running (a reminder loop, say). Leave empty for none.",
-          "ladder_shift_types": "Shift mornings that get the leave-by backstop ladder (early, deadline, late before leave-by). Appointments with a location always get one."
+          "ladder_shift_types": "Shift mornings that get the leave-by backstops (early, deadline, late before leave-by). Appointments with a location always get one."
         }
       },
       "keys": {
@@ -288,7 +288,7 @@
     "house_backstop_source": {
       "options": {
         "old": "Your own rung sensors (below)",
-        "bridge": "Bedtime Bridge ladder"
+        "bridge": "Bedtime Bridge's backstops"
       }
     },
     "drive_time_source": {
@@ -367,7 +367,7 @@
           "done": "Done for this morning",
           "idle_override_off": "Off (shift override)",
           "idle_leave": "Off (leave)",
-          "idle_uncovered": "Off (no ladder for this shift)",
+          "idle_uncovered": "Off (no backstops for this shift)",
           "idle_no_shift": "Off (no shift)",
           "fault": "Fault"
         }

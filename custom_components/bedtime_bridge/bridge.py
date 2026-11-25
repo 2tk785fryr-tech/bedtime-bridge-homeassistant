@@ -1737,10 +1737,15 @@ class BedtimeBridge:
                 self.state["alarm_time"] = data["rings_again"]
                 now = dt_util.utcnow()
                 if rings := _time(data["rings_again"]):
-                    kept = [r for r in (self.state.get("snooze_rings") or []) if (_time(r) or now) > now - timedelta(hours=4)]
+                    # v0.5.5 item 44: the ring it moved from is gone (a ring still to come that
+                    # won't happen); rings already past stay watched.
+                    kept = [r for r in (self.state.get("snooze_rings") or [])
+                            if (t := _time(r)) and now - timedelta(hours=4) < t <= now]
                     self.state["snooze_rings"] = sorted({*kept, rings.isoformat()})
             if isinstance(data.get("alarm_times"), list):
                 self.state["alarm_times"] = [t for t in data["alarm_times"] if isinstance(t, str)]
+            # v0.5.5 item 44: the entities show the new times (no event fires to refresh them).
+            self._changed()
             return
         if data.get("test"):
             await self._wake(CONF_SNOOZE_HELPER)
