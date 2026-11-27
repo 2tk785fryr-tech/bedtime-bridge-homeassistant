@@ -11,13 +11,19 @@ integration lets your house take part: it knows when you snooze, stop, nap, wind
 bed, turns switches on and off for your own automations, and works out backstops that step in
 with lights and speakers if you're still in bed when you should be up.
 
-This repo holds only the latest version of the integration (**0.4.12.9**), plus generic
+This repo holds only the latest version of the integration (**0.4.12.10**), plus generic
 blueprints you can import with one tap.
 
-**New with app 0.6.0 (integration 0.4.12.9):** the backstops work with My week and rotations too,
+**New with app 0.6.0 (integration 0.4.12.10):** the backstops work with My week and rotations too,
 not only a work calendar. When Home Assistant gets drive times from Google (**Drive times from**),
 the phone no longer asks Google for the same morning, and a daily limit under **Configure → Keys**
-keeps the requests down. Update from the Marketplace.
+keeps the requests down. Work trips, leave and days off kept in the app turn the backstops off
+for those days, and with your presence set under **Configure**, the backstops stay off while
+you're away from home (after 30 minutes away, and not on a night whose bedtime started at home).
+Use a `person` entity or a GPS tracker for presence, not a Wi-Fi or router tracker, which can mark
+a sleeping phone as away. A new **Waiting on you** sensor
+(`binary_sensor.bedtime_bridge_waiting_on_you`) is on while an alarm is ringing, snoozed or not
+answered, for your own automations. Update from the Marketplace.
 
 ---
 
@@ -93,7 +99,16 @@ and on again, so automations that start on "on" run each time. Bedtime Bridge tu
 Early wake-up and Awake For Day off again at bedtime.
 
 It also adds sensors (next alarm, last plan, leave-by, the backstops' early, deadline and late
-times and their status, snoozing, wind-down) and a number for each setting the app reads.
+times and their status, snoozing, wind-down) and a number for each setting the app reads. Three
+on/off sensors are there for your own automations:
+
+- **Waiting on you** (`binary_sensor.bedtime_bridge_waiting_on_you`): on while an alarm is
+  ringing, snoozed or not answered, until you stop it (at most 3 hours). Off when you're away
+  from home and with Clock app alarms.
+- **Bedtime pending** (`binary_sensor.bedtime_bridge_bedtime_pending`): on from when alarms are
+  set until bedtime runs.
+- **Plan out of date** (`binary_sensor.bedtime_bridge_plan_out_of_date`): on when the shift or the
+  shift override changed after tonight's plan.
 
 **Briefings.** The morning and bedtime briefings are on `sensor.bedtime_bridge_briefing`
 (attributes `morning` and `bedtime`) and come as a `bedtime_bridge` event with type
@@ -144,7 +159,7 @@ that step.
 
 | Blueprint | What it does | What to pick | Import |
 |---|---|---|---|
-| **Wake deadline backstop** (recommended) | Still in bed as your get-up deadline nears? It steps up: a lamp and a push, then a critical push, an announcement and full lights, until you're up. Silent on every normal morning. | The integration's backstop sensors: early, deadline and late (`sensor.bedtime_bridge_ladder_early`, `sensor.bedtime_bridge_ladder_deadline`, `sensor.bedtime_bridge_ladder_late`) and status (`sensor.bedtime_bridge_ladder_status`); your bed sensor; `switch.bedtime_bridge_exit_latch`; your notify action; lamps, lights, speakers and text-to-speech if you want them. | [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_wake_deadline_backstop.yaml) |
+| **Wake deadline backstop** (recommended) | Still in bed as your get-up deadline nears? It steps up: a lamp and a push, then a critical push, an announcement and full lights, until you're up. Silent on every normal morning. | The integration's backstop sensors: early, deadline and late (`sensor.bedtime_bridge_ladder_early`, `sensor.bedtime_bridge_ladder_deadline`, `sensor.bedtime_bridge_ladder_late`) and status (`sensor.bedtime_bridge_ladder_status`); your bed sensor; `switch.bedtime_bridge_exit_latch`; your person under **Only when you're home**, so it stays quiet while you're away; your notify action; lamps, lights, speakers and text-to-speech if you want them. | [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_wake_deadline_backstop.yaml) |
 | **Alarm event** | Runs your actions when the app reports an alarm event: snoozed, stopped, alarms planned or cancelled, leave-by updated. | The event, and your actions. One automation per event. | [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_alarm_event.yaml) |
 | **Missing plan** | Warns you if a work day is coming but tonight's alarms weren't set. Checks once you've been in bed a while. | Your bed sensor, the integration's Last plan sensor, a shift sensor (below), your notify action. | [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_missing_plan.yaml) |
 | **Nap** | When a nap starts in a room, closes its curtains and turns off its lights, then puts them back after. Add the room's bed or presence sensors so a couch nap leaves the bedroom alone. | `switch.bedtime_bridge_napping`, the room's sensors, curtains and lights. One automation per room. | [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_nap.yaml) |

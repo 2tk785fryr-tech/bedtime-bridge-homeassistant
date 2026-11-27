@@ -40,6 +40,10 @@ class BridgeSetting(BedtimeBridgeEntity, NumberEntity):
             self._attr_translation_key = key
             self._attr_native_min_value, self._attr_native_max_value, self._attr_native_step = low, high, step
             self._attr_icon = "mdi:stairs"
+            if key.startswith("rung_"):
+                # Pre-TestFlight review (L4): named "Backstops …" now; new installs keep the
+                # entity IDs from before (number.bedtime_bridge_ladder_early …).
+                self.entity_id = f"number.bedtime_bridge_ladder_{key.removeprefix('rung_').removesuffix('_minutes')}"
         else:
             _, low, high, step = SETTINGS[key]
             self._attr_translation_key = key

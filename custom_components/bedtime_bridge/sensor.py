@@ -37,7 +37,9 @@ class BridgeSensorDescription(SensorEntityDescription):
 
 
 LADDER_STATUSES = [
-    "armed", "done", "idle_override_off", "idle_leave", "idle_uncovered", "idle_no_shift", "idle_own_off", "idle_remote", "idle_duty", "fault",
+    "armed", "done", "idle_override_off", "idle_leave", "idle_uncovered", "idle_no_shift", "idle_own_off", "idle_remote", "idle_duty",
+    # Pre-TestFlight review (H2).
+    "idle_away", "fault",
 ]
 
 
@@ -304,12 +306,24 @@ async def async_setup_entry(
     async_add_entities(BridgeSensor(entry.runtime_data, description) for description in SENSORS)
 
 
+# Pre-TestFlight review (L4): named "Backstops …" now, but new installs keep the entity IDs the
+# blueprints and docs use (sensor.bedtime_bridge_ladder_*). Existing ones keep theirs anyway.
+KEPT_ENTITY_IDS = {
+    "rung_early": "sensor.bedtime_bridge_ladder_early",
+    "rung_deadline": "sensor.bedtime_bridge_ladder_deadline",
+    "rung_late": "sensor.bedtime_bridge_ladder_late",
+    "ladder_status": "sensor.bedtime_bridge_ladder_status",
+}
+
+
 class BridgeSensor(BedtimeBridgeEntity, SensorEntity):
     entity_description: BridgeSensorDescription
 
     def __init__(self, bridge, description: BridgeSensorDescription) -> None:
         super().__init__(bridge, description.key)
         self.entity_description = description
+        if kept := KEPT_ENTITY_IDS.get(description.key):
+            self.entity_id = kept
 
     @property
     def available(self) -> bool:

@@ -5,7 +5,7 @@ EVENT = "bedtime_bridge"
 
 # v0.5.2 item 11: this integration's version (the same as manifest.json) and the lowest app
 # version it needs. Each release sets them. An app that sends no version is from before 0.5.2.
-INTEGRATION_VERSION = "0.4.12.9"
+INTEGRATION_VERSION = "0.4.12.10"
 MIN_APP_VERSION = "0.5.0"
 APP_VERSION_BEFORE_CHECK = "0.5.1"
 ISSUE_APP_OUTDATED = "app_outdated"
@@ -232,9 +232,9 @@ REPLAN_URL = "bedtimebridge://replan"
 # Ladder settings (item 6): key -> (name, min, max, step, default). Home Assistant owns these; the
 # app can read them.
 LADDER_SETTINGS = {
-    "rung_early_minutes": ("Ladder early, minutes before leave-by", 10, 180, 5, 50),
-    "rung_deadline_minutes": ("Ladder deadline, minutes before leave-by", 10, 180, 5, 35),
-    "rung_late_minutes": ("Ladder late, minutes before leave-by", 5, 120, 5, 20),
+    "rung_early_minutes": ("Backstops early, minutes before leave-by", 10, 180, 5, 50),
+    "rung_deadline_minutes": ("Backstops deadline, minutes before leave-by", 10, 180, 5, 35),
+    "rung_late_minutes": ("Backstops late, minutes before leave-by", 5, 120, 5, 20),
     "first_day_back_minutes": ("First day back extra", 0, 60, 5, 15),
     "fallback_drive_minutes": ("Fallback drive time", 0, 120, 5, 35),
 }

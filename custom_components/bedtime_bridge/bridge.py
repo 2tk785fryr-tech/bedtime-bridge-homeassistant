@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -297,6 +297,15 @@ def _night_of(value: Any) -> str | None:
 # answer from the work calendar is kept.
 DEFAULT_LEAVE_TITLES = ("Leave",)
 LEAVE_CACHE = timedelta(minutes=10)
+# Pre-TestFlight review (M6): how long a reply waits for the backstops' recalculation, and when
+# one that timed out is tried again.
+LADDER_REPLY_WAIT = timedelta(seconds=8)
+LADDER_RETRY = timedelta(minutes=3)
+# Pre-TestFlight review (H1): the app's off days (trip, leave, day off, holiday off) kept this far ahead.
+OFF_DAYS_AHEAD = 14
+# Pre-TestFlight review (merged M6): presence must say away this long before the backstops stand
+# down, so a tracker that drops a sleeping phone off Wi-Fi for a moment doesn't disarm them.
+AWAY_AFTER = timedelta(minutes=30)
 
 
 def leave_covers(event: dict[str, Any], day: Any) -> bool:
@@ -369,6 +378,13 @@ class BedtimeBridge:
         self._unanswered_unsubs: list[Callable[[], None]] = []
         # v0.5.3 item 4: replies to the last messages, by the app's message ID.
         self._replies: dict[str, dict[str, Any]] = {}
+        # Pre-TestFlight review (M6): messages still being handled, by ID; a retry that comes
+        # before the first reply waits for it instead of being handled twice.
+        self._inflight: dict[str, asyncio.Future[dict[str, Any] | None]] = {}
+        # Pre-TestFlight review (M6): a recalculation that timed out is tried again.
+        self._ladder_retry_unsub: Callable[[], None] | None = None
+        # Pre-TestFlight review (merged M6): the backstops looked at again once away long enough.
+        self._away_unsub: Callable[[], None] | None = None
         # v0.5.3 item 35: Good Morning's resends, while it hasn't reported it ran.
         self._resend_unsubs: list[Callable[[], None]] = []
         # v0.5.4 item 60: the bedtime briefing's fallback, while tonight's plan hasn't come.
@@ -582,9 +598,37 @@ class BedtimeBridge:
         # v0.5.3 item 4: a retried message (same ID, from a retry or the second URL) is applied
         # once; the repeat gets the first reply.
         message_id = data.get("message_id")
-        if isinstance(message_id, str) and message_id:
+        if not (isinstance(message_id, str) and message_id):
+            return await self._handle_message(kind, data, handler, None, versions)
+        if message_id in self._replies:
+            return {**self._replies[message_id], "duplicate": True, **versions}
+        if (running := self._inflight.get(message_id)) is not None:
+            # Pre-TestFlight review (M6): the first copy is still being handled (a retry after the
+            # app's timeout, or the second address): this one gets its reply, not a second run.
+            first = await asyncio.shield(running)
+            if first is not None:
+                return {**first, "duplicate": True, **versions}
             if message_id in self._replies:
                 return {**self._replies[message_id], "duplicate": True, **versions}
+        future: asyncio.Future[dict[str, Any] | None] = self.hass.loop.create_future()
+        self._inflight[message_id] = future
+        reply: dict[str, Any] | None = None
+        try:
+            reply = await self._handle_message(kind, data, handler, message_id, versions)
+            return reply
+        finally:
+            # A first copy that failed hands None to a waiting retry, which is then handled itself.
+            self._inflight.pop(message_id, None)
+            if not future.done():
+                future.set_result(reply)
+
+    async def _handle_message(
+        self, kind: Any, data: dict[str, Any], handler: Callable[[dict[str, Any]], Any] | None,
+        message_id: str | None, versions: dict[str, Any],
+    ) -> dict[str, Any]:
+        """One message, applied (`async_handle` has already answered repeats)."""
+        if handler is None:
+            return {"error": f"unknown message type: {kind}", **versions}
         # v0.5.3 item 39: alarms that rang and weren't answered stay watched, whatever list
         # comes next, until answered or the morning is ended on purpose.
         watched_before = self._watched_alarms()
@@ -595,6 +639,10 @@ class BedtimeBridge:
         self.wind_down.adopt_shift_wake(data.get("shift_wake"))
         # v0.5.5 item 33: the app's leave titles, for leave beating shifts.
         self.adopt_leave_titles(data.get("leave_titles"))
+        # Pre-TestFlight review (H1): the days the app knows have no shift, sent with every message.
+        if self.adopt_off_days(data.get("off_days")) and kind not in (
+                MSG_PLANNED, MSG_CANCELLED, MSG_SKIPPED, MSG_UNSKIPPED, MSG_BEDTIME_UNDONE, MSG_RESET):
+            self.hass.async_create_task(self._recompute_ladder())
         self.awake.adopt_settings(data.get("awake_settings"))
         if isinstance(data.get("clock_24h"), bool) and data["clock_24h"] != self.state.get("clock_24h"):
             self.state["clock_24h"] = data["clock_24h"]
@@ -618,10 +666,19 @@ class BedtimeBridge:
             self._changed()
         result = await handler(data) or {}
         if kind in (MSG_PLANNED, MSG_CANCELLED, MSG_SKIPPED, MSG_UNSKIPPED, MSG_BEDTIME_UNDONE):
-            await self._recompute_ladder()
+            # Pre-TestFlight review (M6): the reply waits a few seconds at most (the app gives up
+            # after 10); a recalculation still waiting on the calendar finishes on its own.
+            recompute = self.hass.async_create_task(self._recompute_ladder())
+            try:
+                await asyncio.wait_for(asyncio.shield(recompute), LADDER_REPLY_WAIT.total_seconds())
+            except TimeoutError:
+                _LOGGER.debug("Bedtime Bridge: replying before the backstops are recalculated")
+        # Pre-TestFlight review (M5): a day off's skip only turns the shift's backstops off; the
+        # morning in progress (alarms, leave checks, Live Activity) is left as it is.
+        day_off_skip = kind == MSG_SKIPPED and bool(data.get("day_off"))
         if kind == MSG_PLANNED:
             self._schedule_leave_checks()
-        elif kind in (MSG_CANCELLED, MSG_SKIPPED, MSG_BEDTIME_UNDONE):
+        elif kind in (MSG_CANCELLED, MSG_SKIPPED, MSG_BEDTIME_UNDONE) and not day_off_skip:
             # The morning went: no more leave checks (item 17). A morning change keeps them
             # (v0.4.2 item 1, in _morning_changed).
             self.state["leave_reminders"] = []
@@ -632,7 +689,7 @@ class BedtimeBridge:
             self._schedule_morning_updates()
             if self.live.configured and self.state.get("morning_updates_until") and self.is_home():
                 await self.live.morning()
-        elif kind in (MSG_CANCELLED, MSG_SKIPPED, MSG_RESET) or (kind == MSG_MORNING_CHANGED and not data.get("alarm_times")):
+        elif (kind in (MSG_CANCELLED, MSG_SKIPPED, MSG_RESET) and not day_off_skip) or (kind == MSG_MORNING_CHANGED and not data.get("alarm_times")):
             self._cancel_morning_updates()
             if self.live.configured:
                 await self.live.end_morning()
@@ -699,6 +756,8 @@ class BedtimeBridge:
         if kind == MSG_SNOOZED and (rings := _time(data.get("rings_again"))):
             rings_list = [r for r in (self.state.get("snooze_rings") or []) if (_time(r) or now) > now - timedelta(hours=4)]
             self.state["snooze_rings"] = sorted({*rings_list, rings.isoformat()})
+        # Pre-TestFlight review (H3): the entities (Waiting on you) redraw with the answer in.
+        self._changed()
 
     def _answered(self, alarm: datetime) -> bool:
         """Whether a snooze or stop has answered this alarm since it rang."""
@@ -907,6 +966,10 @@ class BedtimeBridge:
         new, old = event.data.get("new_state"), event.data.get("old_state")
         if new is None or old is None or new.state == old.state:
             return
+        # Pre-TestFlight review (H2): away or back home, the backstops are looked at again.
+        self.hass.async_create_task(self._recompute_ladder())
+        # Pre-TestFlight review (H3): Waiting on you follows home too.
+        async_dispatcher_send(self.hass, signal_update(self.entry.entry_id))
         now = dt_util.utcnow()
         if new.state in HOME_STATES and old.state not in UNKNOWN_STATES:
             self._back_home(now)
@@ -987,12 +1050,17 @@ class BedtimeBridge:
         Routine): wind-down ends (v0.4.3 item 5), the expiry warning (item 9) and Plug in your
         phone (item 10), each once a night. Bedtime is no longer pending (v0.4.8 item 1)."""
         self.pending.bedtime_started()
+        # Pre-TestFlight review (merged M6): a bedtime at home keeps tonight's backstops armed,
+        # whatever presence says later in the night.
+        self.state["bedtime_home_at"] = self.state["bedtime_started_at"] if self.is_home() else None
         self._changed()
         # v0.5.4 item 77: Backstops' Notification tags to clear (e.g. the Nudge's RUN_BEDTIME).
         # Item 81: not wake_backstop, which may be this morning's (the backstop restart clears it).
         await self._clear_tags(bedtime=True)
         # v0.5.4 item 35: Bedtime Bridge's own switches start the night off (yours are yours).
-        await self._turn_off_made(CONF_SNOOZE_HELPER, CONF_STOP_HELPER, CONF_EARLY_HELPER, CONF_AWAKE_HELPER, CONF_EXIT_LATCH)
+        # Pre-TestFlight review (M4): only at home; a bedtime away leaves the house as it is.
+        if self.is_home():
+            await self._turn_off_made(CONF_SNOOZE_HELPER, CONF_STOP_HELPER, CONF_EARLY_HELPER, CONF_AWAKE_HELPER, CONF_EXIT_LATCH)
         await self.wind_down.bedtime_ran()
         await self._warn_app_expiry()
         # v0.5.4 item 28: built and announced now when tonight's plan is already in, else when it
@@ -1089,7 +1157,9 @@ class BedtimeBridge:
         sensor = self.hass.states.get(self.options.get(CONF_SHIFT_SENSOR) or "")
         return {
             "shift_override": override.state if override else None,
-            "next_shift_start": sensor.attributes.get("next_shift_start") if sensor else None,
+            # Pre-TestFlight review (L5): as text, so a datetime attribute can't break the reply.
+            "next_shift_start": (lambda v: v.isoformat() if isinstance(v, datetime) else (str(v) if v else None))(
+                sensor.attributes.get("next_shift_start") if sensor else None),
             "next_shift_type": sensor.attributes.get("next_shift_type") if sensor else None,
             "at_home": self.is_home(),
             # For item 3's confirm screen: the backstops now, and when the curtains open on the
@@ -1271,8 +1341,9 @@ class BedtimeBridge:
         if offsets.valid:
             self.state["ladder_offsets"] = offsets.as_dict()
             return offsets
+        # Pre-TestFlight review (L4): "backstops", not "ladder", in what people read.
         _LOGGER.warning(
-            "Bedtime Bridge ladder settings cross (early %s, deadline %s, late %s); keeping the last valid ladder",
+            "Bedtime Bridge backstops settings cross (early %s, deadline %s, late %s); keeping the last valid backstops",
             offsets.early, offsets.deadline, offsets.late,
         )
         return ldr.Offsets.from_dict(self.state.get("ladder_offsets"))
@@ -1298,7 +1369,26 @@ class BedtimeBridge:
                 async with asyncio.timeout(60):
                     await self._recompute_ladder_now(passed_before)
             except TimeoutError:
-                _LOGGER.warning("Bedtime Bridge: the backstops weren't recalculated (the calendar didn't answer); kept as they were")
+                _LOGGER.warning("Bedtime Bridge: the backstops weren't recalculated (the calendar didn't answer); "
+                                "kept as they were, trying again in %s minutes", int(LADDER_RETRY.total_seconds() // 60))
+                if not self.state.get("ladder"):
+                    # Pre-TestFlight review (M6): after Reset there's nothing to keep; say why.
+                    self._set_ladder({"status": ldr.STATUS_FAULT, "reason": "The calendar didn't answer; trying again soon",
+                                      "morning": None, "times": {}}, None)
+                self._schedule_ladder_retry()
+
+    @callback
+    def _schedule_ladder_retry(self) -> None:
+        """Pre-TestFlight review (M6): a recalculation that timed out runs again a few minutes later."""
+        if self._ladder_retry_unsub:
+            self._ladder_retry_unsub()
+
+        @callback
+        def _retry(_now: datetime) -> None:
+            self._ladder_retry_unsub = None
+            self.hass.async_create_task(self._recompute_ladder())
+
+        self._ladder_retry_unsub = async_track_point_in_utc_time(self.hass, _retry, dt_util.utcnow() + LADDER_RETRY)
 
     async def _recompute_ladder_now(self, passed_before: dict[str, Any] | None) -> None:
         now = dt_util.utcnow()
@@ -1308,6 +1398,14 @@ class BedtimeBridge:
             return
         offsets = self._ladder_offsets()
         morning, status, reason = await self._ladder_morning(now, offsets)
+        if morning is not None and self.away_for_backstops(now):
+            # Pre-TestFlight review (H2): away from home (the integration's own presence; unknown
+            # counts as home), so the house backstops aren't armed. Looked at again when presence
+            # changes (inside the morning lock, an armed morning stays armed).
+            # Pre-TestFlight review (merged M6): only once away for 30 minutes, and not when
+            # tonight's bedtime started at home.
+            self._set_ladder({"status": ldr.STATUS_AWAY, "reason": "You're away from home", "morning": None, "times": {}}, None)
+            return
         if morning is None:
             if status == "keep":
                 if ladder:
@@ -1404,7 +1502,12 @@ class BedtimeBridge:
             elif await self._on_leave(next_start):
                 # v0.5.5 item 33: leave beats every shift on its days, duty included, whatever the
                 # shift sensor's deadline source says. Wake-up events and flights keep theirs.
-                status, reason = ldr.STATUS_LEAVE, "Leave day"
+                # Pre-TestFlight review (H1): the app's off days too (a trip, leave or day off kept
+                # in the app, a holiday you're off). Merged L3: Skip until's days are off days too.
+                status, reason = ldr.STATUS_LEAVE, "Off in the app (day off, trip or Skip until)" if self._off_day(next_start) else "Leave day"
+            elif self._shift_skipped(next_start):
+                # Pre-TestFlight review (H1): skipped in the app, with or without an override to turn Off.
+                status, reason = ldr.STATUS_OVERRIDE_OFF, "This shift was skipped in the app"
             elif str(shift_type or "").lower() not in covered:
                 status, reason = ldr.STATUS_UNCOVERED, f"{shift_type or 'This shift'} mornings have no backstops"
             elif (plan.get("duty_night") and ldr.same_morning(_time(plan.get("shift_start")), next_start)) or self.duty_morning(next_start):
@@ -1507,6 +1610,9 @@ class BedtimeBridge:
             # Fable review: a start that's passed (or was replaced) never blocks a later one.
             if start <= now or (skip and ldr.same_morning(skip, start)):
                 continue
+            if self._off_day(start) or self._shift_skipped(start):
+                # Pre-TestFlight review (H1): an off day or a skipped workday; the next one counts.
+                continue
             if not self._app_covered(shift_type, start):
                 self._app_recheck = start
                 return None, ldr.STATUS_UNCOVERED, f"{shift_type or 'This shift'} mornings have no backstops"
@@ -1540,7 +1646,7 @@ class BedtimeBridge:
             return ldr.Morning("shift", start, "remote", False, shift_start=start, fixed_times=times)
         leave_by, source, warning = ldr.pick_leave_by(_time(plan.get("leave_by")) if planned else None, calendar)
         if warning:
-            _LOGGER.warning("Bedtime Bridge ladder: %s", warning)
+            _LOGGER.warning("Bedtime Bridge backstops: %s", warning)
         if planned and plan.get("first_day_back") is not None:
             first_day_back = bool(plan["first_day_back"])
         elif first_day_back is None:
@@ -1576,8 +1682,9 @@ class BedtimeBridge:
             start = _time(event.get("start"))
             if name is None or start is None or start <= after:
                 continue
-            if await self._on_leave(start):
+            if await self._on_leave(start) or self._shift_skipped(start):
                 # v0.5.5 item 33: a shift on a leave day is skipped; the next one counts.
+                # Pre-TestFlight review (H1): an off day or a skip from the app too.
                 continue
             if name.lower() not in covered:
                 return None, ldr.STATUS_UNCOVERED, f"{name} mornings have no backstops"
@@ -1598,10 +1705,45 @@ class BedtimeBridge:
         self._changed()
         self.hass.async_create_task(self._recompute_ladder())
 
+    def adopt_off_days(self, days: Any) -> bool:
+        """Pre-TestFlight review (H1): the app's off days ("yyyy-mm-dd": a work trip, leave or a
+        day off kept in the app, a holiday you're off), from today on. Home Assistant can't see
+        these on the work calendar; a shift on one has no backstops, every night, without waiting
+        for a skip. True when they changed."""
+        if not isinstance(days, list):
+            return False
+        today = dt_util.now().date()
+        clean: set[str] = set()
+        for value in days:
+            try:
+                day = date.fromisoformat(value) if isinstance(value, str) else None
+            except ValueError:
+                day = None
+            if day is not None and today <= day <= today + timedelta(days=OFF_DAYS_AHEAD + 7):
+                clean.add(day.isoformat())
+        off = sorted(clean)
+        if off == self.state.get("off_days"):
+            return False
+        self.state["off_days"] = off
+        self._changed()
+        return True
+
+    def _off_day(self, shift_start: datetime) -> bool:
+        """Pre-TestFlight review (H1): the shift's day is one of the app's off days."""
+        return dt_util.as_local(shift_start).date().isoformat() in (self.state.get("off_days") or [])
+
+    def _shift_skipped(self, shift_start: datetime) -> bool:
+        """Pre-TestFlight review (H1): a skip the app sent for this shift's morning, kept here so it
+        works with no shift override to turn Off."""
+        return any(ldr.same_morning(_time(s), shift_start) for s in self.state.get("skipped_shifts") or [])
+
     async def _on_leave(self, shift_start: datetime) -> bool:
         """v0.5.5 item 33: the shift's day is covered by an all-day leave event on the work
         calendar (end date exclusive, so leave ending on the 1st doesn't cover the 1st). Read
-        failures count as not leave: the backstops stay rather than go quiet by mistake."""
+        failures count as not leave: the backstops stay rather than go quiet by mistake.
+        Pre-TestFlight review (H1): or it's one of the app's off days."""
+        if self._off_day(shift_start):
+            return True
         day = dt_util.as_local(shift_start).date()
         now = dt_util.utcnow()
         cached = self._leave_cache.get(day.isoformat())
@@ -1750,7 +1892,7 @@ class BedtimeBridge:
         if kind == "weather":
             ladder["weather_extra_minutes"] = ladder.get("weather_extra_minutes", 0) + minutes
             ladder["condition"] = condition
-        _LOGGER.info("Bedtime Bridge ladder moved %s min earlier for %s", minutes, condition or kind)
+        _LOGGER.info("Bedtime Bridge backstops moved %s min earlier for %s", minutes, condition or kind)
         self._changed()
 
     def _traffic_moved(self, new_leave_by: datetime | None) -> None:
@@ -1781,7 +1923,7 @@ class BedtimeBridge:
                 "weather", "get_forecasts", {"entity_id": weather, "type": "hourly"}, blocking=True, return_response=True
             )
         except Exception as err:  # noqa: BLE001 - a missed check is retried in 15 minutes
-            _LOGGER.debug("Bedtime Bridge ladder forecast check failed: %s", err)
+            _LOGGER.debug("Bedtime Bridge backstops forecast check failed: %s", err)
             return
         forecast = ((response or {}).get(weather) or {}).get("forecast") or []
         plan = self.state.get("ladder_plan") or {}
@@ -1894,13 +2036,16 @@ class BedtimeBridge:
             await self._wake(CONF_SNOOZE_HELPER)
             self._event(MSG_SNOOZED, test=True)
             return
-        self.state["snoozed_until"] = data.get("rings_again")
+        # Pre-TestFlight review (L2): with two alarms snoozing, the app's snoozed_until is the
+        # earlier ring; this alarm's rings_again may be the later one.
+        earliest = data.get("snoozed_until") if _time(data.get("snoozed_until")) else data.get("rings_again")
+        self.state["snoozed_until"] = earliest
         self.state["snooze_count"] = int(self.state.get("snooze_count") or 0) + 1
         # v0.6.0 item 36: the times left, as a moved snooze already keeps them.
         if isinstance(data.get("alarm_times"), list):
             self.state["alarm_times"] = [t for t in data["alarm_times"] if isinstance(t, str)]
-        if data.get("rings_again"):
-            self.state["alarm_time"] = data["rings_again"]
+        if earliest:
+            self.state["alarm_time"] = earliest
         if self.state.get("routine_ran") or self._state_of(CONF_SNOOZE_HELPER) == "on":
             # Already up (the wake routine ran), or the fade is running: nothing to start.
             self.state["skipped_away"] = self._away_blocks()
@@ -1916,15 +2061,21 @@ class BedtimeBridge:
             return
         # all: the slide-and-hold that ends every alarm left in this wake-up (item 2).
         stop_all = bool(data.get("all"))
-        remaining = [] if stop_all else data.get("alarm_times") or []
+        # Pre-TestFlight review (M1): an app that says `last` sends what's left (with a hold-all,
+        # a later wake-up's alarms), so those stay watched. An older app's hold-all sends none.
+        trusts_list = "last" in data
+        remaining = [t for t in (data.get("alarm_times") or []) if isinstance(t, str)] if (trusts_list or not stop_all) else []
+        # The wake-up is over: nothing left, or the app says this was its last (or ended them all).
+        over = not remaining or (trusts_list and (data.get("last") is True or stop_all))
         # Another alarm still snoozing (v0.4.11 item 6): it's left, and its ring-again stays.
-        self.state["snoozed_until"] = (data.get("snoozed_until") or None) if remaining else None
+        self.state["snoozed_until"] = (data.get("snoozed_until") or None) if remaining and not stop_all else None
         self.state["alarm_times"] = remaining
         self.state["alarm_time"] = remaining[0] if remaining else None
         # v0.6.0 item 38 (Fable review): more of this wake-up to come; the app says so with last.
-        self.state["wake_up_open"] = dt_util.utcnow().isoformat() if remaining and data.get("last") is False else None
+        self.state["wake_up_open"] = dt_util.utcnow().isoformat() if remaining and data.get("last") is False and not stop_all else None
         if not remaining:
             self.state["alarm_cause"] = "noalarm"
+        if over:
             self._end_morning()
         # early: ended from Tonight before any alarm rang (item 8), so the early helper runs.
         early = bool(data.get("early"))
@@ -1942,7 +2093,7 @@ class BedtimeBridge:
             self.state["routine_ran"] = True
         else:
             self.state["skipped_away"] = self._away_blocks()
-        if not remaining and self.is_home():
+        if over and self.is_home():
             # v0.5.4 item 35: the wake-up is over. Bedtime Bridge's own Awake For Day goes on and
             # its Bedtime switch off (your own helpers are left to your wake routine).
             if self.is_made(CONF_AWAKE_HELPER):
@@ -2267,6 +2418,12 @@ class BedtimeBridge:
         if self._restore_unsub:
             self._restore_unsub()
             self._restore_unsub = None
+        if self._ladder_retry_unsub:
+            self._ladder_retry_unsub()
+            self._ladder_retry_unsub = None
+        if self._away_unsub:
+            self._away_unsub()
+            self._away_unsub = None
         if self._ladder_unsub:
             self._ladder_unsub()
             self._ladder_unsub = None
@@ -2328,7 +2485,11 @@ class BedtimeBridge:
             return
         # Fix decided 12 Nov: skipped when Home Assistant knows you're up: the stop routine ran
         # and you're out of bed. Never on the bed sensor alone.
-        if self.state.get("routine_ran") and self.awake.s.get("out_since"):
+        # Pre-TestFlight review (L1): "out of bed" on an alarm morning is the exit latch, latched
+        # since the alarms began (out_since is only set on mornings with no alarms).
+        latch = self.hass.states.get(self.options.get(CONF_EXIT_LATCH) or "")
+        left = latch is not None and latch.state == "on" and self._latched_this_morning(latch.last_changed)
+        if self.state.get("routine_ran") and (left or self.awake.s.get("out_since")):
             return
         done = list(self.state.get("unanswered_alarms") or [])
         if alarm.isoformat() in done:
@@ -2671,16 +2832,27 @@ class BedtimeBridge:
     async def _skipped(self, data: dict[str, Any]) -> None:
         """Skipped the night before: that morning's wake-up doesn't exist. A skipped shift
         turns the shift override Off (which disarms the wake failsafe) until the shift has
-        passed. Stopping alarms in the morning never does this."""
-        self.state.update(empty_state())
-        # v0.4.10 item 10: No alarms now skips, so it clears what cancelled did: bedtime pending,
-        # and your own alarms' backstops (v0.4.8 item 7).
-        self.pending.cleared()
-        if (self.state.get("ladder_plan") or {}).get("type") == "own":
-            self.state["ladder_plan"] = self._app_ladder_plan()
-        # Counts as tonight's plan, so the missing-plan check doesn't nag about the shift.
-        self.state["last_plan"] = dt_util.utcnow().isoformat()
-        self.state["plan_error"] = None
+        passed. Stopping alarms in the morning never does this.
+        Pre-TestFlight review (M5): a day off's skip (`day_off`, sent by a plan) only turns the
+        shift's backstops off; the alarms and the morning in progress are left as they are."""
+        day_off = bool(data.get("day_off"))
+        if not day_off:
+            self.state.update(empty_state())
+            # v0.4.10 item 10: No alarms now skips, so it clears what cancelled did: bedtime
+            # pending, and your own alarms' backstops (v0.4.8 item 7).
+            self.pending.cleared()
+            if (self.state.get("ladder_plan") or {}).get("type") == "own":
+                self.state["ladder_plan"] = self._app_ladder_plan()
+            # Counts as tonight's plan, so the missing-plan check doesn't nag about the shift.
+            self.state["last_plan"] = dt_util.utcnow().isoformat()
+            self.state["plan_error"] = None
+        if data.get("shift") and (skipped := _time(data.get("shift_start"))):
+            # Pre-TestFlight review (H1): kept here until the shift has passed, so the backstops
+            # stay off with no shift override (or one the skip couldn't turn Off).
+            now = dt_util.utcnow()
+            kept = [v for v in self.state.get("skipped_shifts") or [] if (t := _time(v)) and t + timedelta(hours=1) > now]
+            self.state["skipped_shifts"] = sorted({*kept, skipped.isoformat()})
+            self._changed()
         override = self.options.get(CONF_SHIFT_OVERRIDE)
         current = self._state_of(CONF_SHIFT_OVERRIDE)
         failsafe_off = False
@@ -2699,6 +2871,8 @@ class BedtimeBridge:
 
     async def _unskipped(self, data: dict[str, Any]) -> None:
         """Undo: the override goes back first, so the plan that follows sees the shift."""
+        # Pre-TestFlight review (H1): the skip kept here goes too.
+        self.state["skipped_shifts"] = []
         await self._restore_override()
         self._event(MSG_UNSKIPPED)
 
@@ -3008,6 +3182,52 @@ class BedtimeBridge:
         self._event(MSG_LEAVE_BY, note=data.get("note"))
 
     # MARK: Effects
+
+    def away_for_backstops(self, now: datetime) -> bool:
+        """Pre-TestFlight review (merged M6): away as the backstops see it: presence not home for
+        at least AWAY_AFTER, and tonight's bedtime didn't start at home. A sleeping phone that drops
+        off Wi-Fi at 03:00 keeps the backstops armed. Until AWAY_AFTER has passed, the backstops
+        are looked at again then."""
+        if self.is_home():
+            self._cancel_away_check()
+            return False
+        if self._bedtime_started_home():
+            return False
+        since = self._away_since()
+        if since is not None and now - since < AWAY_AFTER:
+            self._schedule_away_check(since + AWAY_AFTER)
+            return False
+        return True
+
+    def _away_since(self) -> datetime | None:
+        """When the presence entities last changed (all of them say away, as is_home is False)."""
+        entity_ids = self.options.get(CONF_PRESENCE) or []
+        if isinstance(entity_ids, str):
+            entity_ids = [entity_ids]
+        changed = [state.last_changed for entity_id in entity_ids if (state := self.hass.states.get(entity_id)) is not None]
+        return max(changed) if changed else None
+
+    def _bedtime_started_home(self) -> bool:
+        """Tonight's bedtime ran while home (noted at bedtime_started)."""
+        started = self.state.get("bedtime_started_at")
+        return bool(started) and self.state.get("bedtime_home_at") == started and self.pending.started_tonight()
+
+    @callback
+    def _schedule_away_check(self, when: datetime) -> None:
+        self._cancel_away_check()
+
+        @callback
+        def _check(_now: datetime) -> None:
+            self._away_unsub = None
+            self.hass.async_create_task(self._recompute_ladder())
+
+        self._away_unsub = async_track_point_in_utc_time(self.hass, _check, when)
+
+    @callback
+    def _cancel_away_check(self) -> None:
+        if self._away_unsub:
+            self._away_unsub()
+            self._away_unsub = None
 
     def is_home(self) -> bool:
         """True when any presence entity is home (or unknown); True when none are set."""

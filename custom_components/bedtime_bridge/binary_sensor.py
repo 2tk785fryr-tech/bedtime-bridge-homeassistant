@@ -62,10 +62,20 @@ class WaitingOnYouSensor(BedtimeBridgeEntity, BinarySensorEntity):
         self._unsub_timer: CALLBACK_TYPE | None = None
 
     def _now(self) -> tuple[bool, datetime | None]:
-        helper = self.hass.states.get(self.bridge.options.get(CONF_AWAKE_HELPER) or "")
-        awake_since = helper.last_changed if helper is not None and helper.state == "on" else None
         state = self.bridge.state
-        return waiting_on_you(self.bridge._watched_alarms(), dt_util.utcnow(), snoozed=_time(state.get("snoozed_until")),
+        # Pre-TestFlight review (H3): Clock app alarms are left out (their snooze and stop never
+        # reach Home Assistant), as the not-answered check leaves them out; and away from home
+        # it's off (alarms ringing at a hotel aren't the house's business).
+        if state.get("alarm_style") == "clock" or not self.bridge.is_home():
+            return False, None
+        helper = self.hass.states.get(self.bridge.options.get(CONF_AWAKE_HELPER) or "")
+        # Pre-TestFlight review (H3): read by what it means ("On means asleep" reads the other way).
+        awake_since = helper.last_changed if helper is not None and self.bridge._state_of(CONF_AWAKE_HELPER) == "on" else None
+        now = dt_util.utcnow()
+        # Pre-TestFlight review (H3): an alarm (or a snooze's ring) a snooze or Stop has answered
+        # isn't waited on any more; the not-answered check reads it the same way.
+        times = [t for t in self.bridge._watched_alarms() if t > now or not self.bridge._answered(t)]
+        return waiting_on_you(times, now, snoozed=_time(state.get("snoozed_until")),
                               open_since=_time(state.get("wake_up_open")), awake_since=awake_since)
 
     @property

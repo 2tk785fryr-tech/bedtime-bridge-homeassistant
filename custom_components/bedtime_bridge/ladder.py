@@ -30,6 +30,8 @@ STATUS_OWN_OFF = "idle_own_off"
 STATUS_REMOTE = "idle_remote"
 # v0.4.11 item 75: the morning after a duty night, already at work.
 STATUS_DUTY = "idle_duty"
+# Pre-TestFlight review (H2): away from home, so the house backstops aren't armed.
+STATUS_AWAY = "idle_away"
 # Your own alarm's backstops, minutes after its LAST alarm.
 DEFAULT_OWN_OFFSETS = {"early": 15, "deadline": 30, "late": 45}
 STATUS_FAULT = "fault"

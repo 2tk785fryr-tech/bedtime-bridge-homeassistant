@@ -102,8 +102,9 @@ blueprint:
         presence_entities:
           name: Only when you're home (optional)
           description: >
-            Away, or in any other zone, stops the backstops; unknown counts as home. Leave empty
-            to run whether you're home or not.
+            Away, or in any other zone, stops the backstops; unknown counts as home. Pick the
+            same person as under Bedtime Bridge's Configure (it keeps its backstops off while
+            you're away too). Leave empty to run whether you're home or not.
           default: []
           selector:
             entity:

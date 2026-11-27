@@ -362,16 +362,16 @@
         "name": "Last plan"
       },
       "rung_early": {
-        "name": "Ladder early"
+        "name": "Backstops early"
       },
       "rung_deadline": {
-        "name": "Ladder deadline"
+        "name": "Backstops deadline"
       },
       "rung_late": {
-        "name": "Ladder late"
+        "name": "Backstops late"
       },
       "ladder_status": {
-        "name": "Ladder status",
+        "name": "Backstops status",
         "state": {
           "armed": "Armed",
           "done": "Done for this morning",
@@ -379,6 +379,10 @@
           "idle_leave": "Off (leave)",
           "idle_uncovered": "Off (no backstops for this shift)",
           "idle_no_shift": "Off (no shift)",
+          "idle_own_off": "Off (your own alarm)",
+          "idle_remote": "Off (remote shift)",
+          "idle_duty": "Off (after duty, at work)",
+          "idle_away": "Off (away from home)",
           "fault": "Fault"
         }
       },
@@ -445,13 +449,13 @@
         "name": "{shift} lead time"
       },
       "rung_early_minutes": {
-        "name": "Ladder early"
+        "name": "Backstops early"
       },
       "rung_deadline_minutes": {
-        "name": "Ladder deadline"
+        "name": "Backstops deadline"
       },
       "rung_late_minutes": {
-        "name": "Ladder late"
+        "name": "Backstops late"
       },
       "first_day_back_minutes": {
         "name": "First day back extra"
