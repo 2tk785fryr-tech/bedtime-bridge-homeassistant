@@ -109,11 +109,31 @@ def weather_lines(hours: list[dict[str, Any]], leave_by: datetime, now: datetime
 class ApnsClient:
     """Token-based (.p8) connection to Apple's push service, over HTTP/2."""
 
-    def __init__(self, key: str, key_id: str, team_id: str) -> None:
+    def __init__(self, key: str, key_id: str, team_id: str, hass: Any = None) -> None:
         self._key = key.strip()
         self._key_id = key_id.strip()
         self._team_id = team_id
         self._jwt: tuple[str, float] | None = None
+        self._hass = hass
+        self._http: Any = None
+
+    def _http_client(self) -> Any:
+        """v0.6.0 item 36: one HTTP/2 client for every push, Home Assistant's own where it can
+        make one (closed with Home Assistant)."""
+        if self._http is None:
+            import httpx  # noqa: PLC0415
+
+            # The device token is in the URL, and httpx logs every request at INFO.
+            logging.getLogger("httpx").setLevel(max(logging.getLogger("httpx").level, logging.WARNING))
+            try:
+                from homeassistant.helpers.httpx_client import create_async_httpx_client  # noqa: PLC0415
+                from homeassistant.util.ssl import SSL_ALPN_HTTP11_HTTP2  # noqa: PLC0415
+
+                self._http = create_async_httpx_client(self._hass, alpn_protocols=SSL_ALPN_HTTP11_HTTP2, timeout=10)
+            except (ImportError, TypeError, AttributeError):
+                # Home Assistant before HTTP/2 support in its client (or no hass, in a test).
+                self._http = httpx.AsyncClient(http2=True, timeout=10)
+        return self._http
 
     def _token(self) -> str:
         # Apple wants a fresh signature at most once every 20 minutes and at least once an hour.
@@ -141,8 +161,7 @@ class ApnsClient:
         # v0.5.3 item 6: a network or HTTP/2 error is a failed push (0), never an exception that
         # turns the message being handled into a 500 and skips the work after it.
         try:
-            async with httpx.AsyncClient(http2=True, timeout=10) as client:
-                response = await client.post(url, json=body, headers=headers)
+            response = await self._http_client().post(url, json=body, headers=headers)
         except (httpx.HTTPError, OSError, ValueError) as err:
             _LOGGER.warning("Bedtime Bridge Live Activity push couldn't be sent: %s", type(err).__name__)
             return 0
@@ -174,7 +193,7 @@ class LiveActivities:
             return None
         key = (self.bridge.options[CONF_APNS_KEY], self.bridge.options[CONF_APNS_KEY_ID], self.s["team_id"])
         if self._client is None or self._client_key != key:
-            self._client = ApnsClient(*key)
+            self._client = ApnsClient(*key, hass=self.hass)
             self._client_key = key
         return self._client
 

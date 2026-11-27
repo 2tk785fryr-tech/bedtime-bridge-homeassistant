@@ -21,6 +21,8 @@ from .const import (
     CONF_BEDROOM_DOOR,
     CONF_DRIVE_SOURCE,
     CONF_GOOGLE_KEY,
+    CONF_GOOGLE_BUDGET,
+    DEFAULT_GOOGLE_BUDGET,
     CONF_HALLWAY_SENSORS,
     CONF_PARTNER_BED,
     CONF_MAPS_KEY,
@@ -67,6 +69,7 @@ from .const import (
     HOUSE_BRIDGE,
     HOUSE_OLD,
     DEFAULT_LADDER_SHIFT_TYPES,
+    ladder_shift_types,
     DEFAULT_SHIFT_TYPES,
     DOMAIN,
     SUGGESTED,
@@ -130,6 +133,7 @@ OPTION_KEYS = [
     CONF_MAPS_KEY_ID,
     CONF_TOMTOM_KEY,
     CONF_GOOGLE_KEY,
+    CONF_GOOGLE_BUDGET,
     CONF_HALLWAY_SENSORS,
     *SOURCE_KEYS,
     CONF_AWAKE_ON_MEANS,
@@ -175,7 +179,8 @@ PAGES: dict[str, list[str]] = {
     "phone": [CONF_NOTIFY, CONF_PHONE_COMMANDS, CONF_REPLAN_ALERT, CONF_PHONE_BATTERY, CONF_PHONE_BATTERY_STATE, CONF_COMPLETE_MINUTES,
               CONF_CLEAR_TAGS, CONF_WIND_DOWN_NOTIFY],
     "backstops": [CONF_HOUSE_BACKSTOP, CONF_OLD_RUNGS, CONF_RESTART_AUTOMATIONS, CONF_LADDER_SHIFT_TYPES],
-    "keys": [CONF_APNS_KEY, CONF_APNS_KEY_ID, CONF_DRIVE_SOURCE, CONF_MAPS_KEY, CONF_MAPS_KEY_ID, CONF_TOMTOM_KEY, CONF_GOOGLE_KEY],
+    "keys": [CONF_APNS_KEY, CONF_APNS_KEY_ID, CONF_DRIVE_SOURCE, CONF_MAPS_KEY, CONF_MAPS_KEY_ID, CONF_TOMTOM_KEY, CONF_GOOGLE_KEY,
+             CONF_GOOGLE_BUDGET],
 }
 # Adding the integration asks only these; the rest start from their defaults and suggestions.
 SETUP_KEYS = [CONF_PRESENCE, CONF_HOME_ONLY, CONF_NOTIFY, CONF_PHONE_COMMANDS, CONF_WAKE_ACTION, CONF_SHIFT_TYPES]
@@ -281,7 +286,7 @@ def _schema(hass: HomeAssistant, current: dict[str, Any]) -> vol.Schema:
             vol.Optional(CONF_WEATHER, description=suggested(CONF_WEATHER)): entity(["weather"]),
             vol.Required(CONF_SHIFT_TYPES, default=current.get(CONF_SHIFT_TYPES) or DEFAULT_SHIFT_TYPES): selector.TextSelector(),
             vol.Optional(
-                CONF_LADDER_SHIFT_TYPES, default=current.get(CONF_LADDER_SHIFT_TYPES) or DEFAULT_LADDER_SHIFT_TYPES
+                CONF_LADDER_SHIFT_TYPES, default=ladder_shift_types(current)
             ): selector.SelectSelector(selector.SelectSelectorConfig(options=shift_names, multiple=True, custom_value=True)),
             vol.Optional(CONF_CALENDAR, description=suggested(CONF_CALENDAR)): entity(["calendar"]),
             vol.Optional(CONF_RESTART_AUTOMATIONS, description=restart_suggestion()): selector.EntitySelector(
@@ -343,6 +348,9 @@ def _schema(hass: HomeAssistant, current: dict[str, Any]) -> vol.Schema:
                 selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
             ),
             vol.Required(
+                CONF_GOOGLE_BUDGET, default=current.get(CONF_GOOGLE_BUDGET) or DEFAULT_GOOGLE_BUDGET
+            ): selector.NumberSelector(selector.NumberSelectorConfig(min=10, max=1000, step=10, mode=selector.NumberSelectorMode.BOX)),
+            vol.Required(
                 CONF_RERUN_MINUTES, default=current.get(CONF_RERUN_MINUTES) or DEFAULT_RERUN_MINUTES
             ): selector.NumberSelector(selector.NumberSelectorConfig(min=1, max=60, step=1, unit_of_measurement="min")),
             vol.Optional(CONF_HOME_CHECKS, description=home_checks_suggestion()): selector.EntitySelector(
@@ -369,6 +377,21 @@ def changed_text(pages: list[str]) -> str:
     return f"**Changed: {names}.** Not saved until you choose **Save and close**; closing with ✕ drops them."
 
 
+
+def notify_errors(hass: HomeAssistant, user_input: dict[str, Any], current: dict[str, Any] | None = None) -> dict[str, str]:
+    """v0.6.0 item 36: each notify field filled in names a notify service Home Assistant has
+    in full ("notify.mobile_app_your_iphone"), as it's used. One already saved isn't checked
+    again (the Mobile App integration may still be starting)."""
+    errors: dict[str, str] = {}
+    for key in (CONF_NOTIFY, CONF_WIND_DOWN_NOTIFY):
+        value = str(user_input.get(key) or "").strip()
+        if not value or value == str((current or {}).get(key) or "").strip():
+            continue
+        domain, _, service = value.partition(".")
+        if not service or not hass.services.has_service(domain, service):
+            errors[key] = "no_notify_service"
+    return errors
+
 class BedtimeBridgeConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
     # 1.2 (v0.5.4 item 35): each helper's "Bedtime Bridge makes it / Use mine" choice.
@@ -382,6 +405,9 @@ class BedtimeBridgeConfigFlow(ConfigFlow, domain=DOMAIN):
         await self.async_set_unique_id(DOMAIN)
         self._abort_if_unique_id_configured()
         full = _schema(self.hass, {})
+        if user_input is not None and (errors := notify_errors(self.hass, user_input)):
+            return self.async_show_form(step_id="user", data_schema=self.add_suggested_values_to_schema(_subset(full, SETUP_KEYS), user_input),
+                                        errors=errors)
         if user_input is not None:
             self._options = {**_starting_options(self.hass, full), **{key: None for key in SETUP_KEYS}, **user_input}
             # v0.5.4 item 57: the ladder covers every shift type entered (an existing install
@@ -432,6 +458,10 @@ class BedtimeBridgeOptionsFlow(OptionsFlow):
 
     async def _page(self, page: str, user_input: dict[str, Any] | None) -> ConfigFlowResult:
         current = {**self.config_entry.options, **self._changes}
+        if user_input is not None and (errors := notify_errors(self.hass, user_input, current)):
+            # v0.6.0 item 36: a notify service that doesn't exist isn't saved.
+            schema = _subset(_schema(self.hass, current), PAGES[page])
+            return self.async_show_form(step_id=page, data_schema=self.add_suggested_values_to_schema(schema, user_input), errors=errors)
         if user_input is not None:
             # A field cleared on this page stays cleared; other pages keep theirs.
             new = {**{key: None for key in PAGES[page]}, **user_input}

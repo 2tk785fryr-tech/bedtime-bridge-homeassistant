@@ -312,10 +312,10 @@ nav.top .brand span.i { width: 32px; height: 32px; border-radius: 8px; overflow:
 .series i:nth-child(4) { animation-delay: 1.5s; } .series i:nth-child(5) { animation-delay: 2s; }
 @keyframes seriesOn { 0%,10% { background: rgba(109,74,255,.25); } 20%,70% { background: #8B5CF6; box-shadow: 0 0 10px #8B5CF6; } 85%,100% { background: rgba(109,74,255,.25); } }
 
-/* Backstop ladder steps lighting in turn */
-.ladder > * { animation: rung 6s ease-in-out infinite; }
-.ladder > :nth-child(2) { animation-delay: 2s; }
-.ladder > :nth-child(3) { animation-delay: 4s; }
+/* Backstop steps lighting in turn */
+.backstop-steps > * { animation: rung 6s ease-in-out infinite; }
+.backstop-steps > :nth-child(2) { animation-delay: 2s; }
+.backstop-steps > :nth-child(3) { animation-delay: 4s; }
 @keyframes rung { 0%,5% { border-color: var(--border); box-shadow: none; } 12%,30% { border-color: rgba(251,191,36,.9); box-shadow: 0 0 22px rgba(251,191,36,.35); } 40%,100% { border-color: var(--border); box-shadow: none; } }
 
 /* A tick that draws itself */
@@ -346,7 +346,7 @@ nav.top.scrolled { background: rgba(11,16,38,.92); box-shadow: 0 8px 30px rgba(0
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .reveal { opacity: 1; transform: none; }
 }
-.ladder .ui-card { margin-bottom: 0; }
+.backstop-steps .ui-card { margin-bottom: 0; }
 
 .bp { display: flex; flex-direction: column; }
 .bp .btn { margin-top: auto; align-self: flex-start; }
@@ -421,7 +421,7 @@ nav.top.scrolled { background: rgba(11,16,38,.92); box-shadow: 0 8px 30px rgba(0
       <div class="ui-card"><div class="ui-row"><span>Next alarm</span><b>4:30</b></div><div class="muted small">Work · leave by 5:40</div></div>
       <div class="ui-card"><div class="ui-row"><span>Last plan</span><b>22:41</b></div><div class="muted small">set at bedtime</div></div>
       <div class="ui-label">Backstop</div>
-      <div class="ladder" style="display:grid;gap:10px;margin-bottom:10px"><div class="ui-card"><div class="ui-row"><span><span class="ui-dot" style="background:#7DE3C8"></span>Early</span><b>4:50</b></div></div>
+      <div class="backstop-steps" style="display:grid;gap:10px;margin-bottom:10px"><div class="ui-card"><div class="ui-row"><span><span class="ui-dot" style="background:#7DE3C8"></span>Early</span><b>4:50</b></div></div>
       <div class="ui-card"><div class="ui-row"><span><span class="ui-dot" style="background:#FBBF24"></span>Deadline</span><b>5:05</b></div></div>
       <div class="ui-card"><div class="ui-row"><span><span class="ui-dot" style="background:#FCA5A5"></span>Late</span><b>5:20</b></div></div></div>
       <div class="ui-card"><div class="ui-row"><span>Snoozing</span><b style="color:var(--snooze)" data-countdown="540">9:00</b></div></div>
@@ -434,10 +434,11 @@ nav.top.scrolled { background: rgba(11,16,38,.92); box-shadow: 0 8px 30px rgba(0
   <div class="wrap">
     <div class="center" style="margin-bottom:36px"><span class="eyebrow">How it fits together</span><h2>Your phone plans. Your house acts.</h2></div>
     <div class="flow">
-      <div class="card"><div class="ico" style="margin:0 auto 14px">📅</div><h3>The app</h3><p>Reads your work schedule from your calendar, a 9-to-5 or shifts, and plans each morning: alarms, leave-by, wind-down.</p></div>
+      <div class="card"><div class="ico" style="margin:0 auto 14px">📅</div><h3>The app</h3><p>Knows your work schedule, a 9-to-5 or shifts, from your calendar, your week or a rotation, and plans each morning: alarms, leave-by, wind-down.</p></div>
       <div class="card"><div class="ico" style="margin:0 auto 14px">⌂</div><h3>The integration</h3><p>Sets the alarms at bedtime and turns its own switches on and off as you snooze, stop, nap and wind down.</p></div>
       <div class="card"><div class="ico" style="margin:0 auto 14px">💡</div><h3>Your automations</h3><p>React to those helpers with your lights, curtains and speakers, using the blueprints below.</p></div>
     </div>
+    <div class="card hl" style="margin-top:20px"><span class="tag good">New · 0.4.12.9</span><p>With app 0.6.0, the backstops work with My week and rotations too, not only a work calendar. When Home Assistant gets drive times from Google (<b>Drive times from</b>), the phone no longer asks Google for the same morning, and a daily limit under <b>Configure → Keys</b> keeps the requests down. Also new: a <b>Waiting on you</b> sensor for your automations, and Reset no longer brings back backstops that already passed. Update the integration from the Marketplace.</p></div>
   </div>
 </section>
 
@@ -498,10 +499,10 @@ nav.top.scrolled { background: rgba(11,16,38,.92); box-shadow: 0 8px 30px rgba(0
   </div>
 </section>
 
-<section id="briefings">
+<section class="alt" id="briefings">
   <div class="wrap">
     <div class="center" style="margin-bottom:28px">
-      <span class="eyebrow">Since 0.4.12 · latest 0.4.12.8</span>
+      <span class="eyebrow">Since 0.4.12 · latest 0.4.12.9</span>
       <h2>Briefings for your speakers.</h2>
       <p class="lead">The morning and bedtime briefings land on the <code>sensor.bedtime_bridge_briefing</code> sensor and the <code>morning_briefing</code> and <code>bedtime_briefing</code> events. Speak them from your own automation (trigger on the event), and skip home speakers when <code>away</code> is true.</p>
     </div>
@@ -513,7 +514,7 @@ nav.top.scrolled { background: rgba(11,16,38,.92); box-shadow: 0 8px 30px rgba(0
   </div>
 </section>
 
-<section class="alt" id="blueprints">
+<section id="blueprints">
   <div class="wrap">
     <div class="center" style="margin-bottom:40px">
       <span class="eyebrow">4 · Blueprints</span>
@@ -534,15 +535,15 @@ nav.top.scrolled { background: rgba(11,16,38,.92); box-shadow: 0 8px 30px rgba(0
   </div>
 </section>
 
-<section id="help">
+<section class="alt" id="help">
   <div class="wrap">
     <div class="grid2">
       <div>
         <span class="eyebrow">5 · Check it works</span>
         <h2>Three quick checks</h2>
         <ul class="ticks">
-          <li><b>Devices &amp; services → Bedtime Bridge</b> shows its sensors: next alarm, last plan, backstop times, snoozing.</li>
-          <li>The app's <b>Settings → Home Assistant</b> says <b>Connected</b>.</li>
+          <li><b>Devices &amp; services → Bedtime Bridge</b> shows its sensors: next alarm, last plan, backstop times, snoozing, and Waiting on you (on while an alarm is ringing, snoozed or not answered).</li>
+          <li>The app's <b>Settings → Home Assistant</b> (Smart home › Home Assistant when grouped) says <b>Connected</b>.</li>
           <li>Tap <b>Set alarms</b> in the app: the last plan sensor updates. (<b>Preview tomorrow</b> only shows a plan; it sets nothing.)</li>
         </ul>
       </div>

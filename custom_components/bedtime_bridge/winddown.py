@@ -81,6 +81,14 @@ CHECK_BEFORE = timedelta(minutes=30)
 PLAN_CHECK_SIGNAL = "plan_check"
 
 
+def _aware(value: object) -> datetime | None:
+    """v0.6.0 item 27: a time from the app, with its offset (one without is taken as local)."""
+    parsed = dt_util.parse_datetime(str(value or ""))
+    if parsed is None:
+        return None
+    return parsed if parsed.tzinfo else dt_util.as_utc(parsed.replace(tzinfo=dt_util.get_default_time_zone()))
+
+
 @dataclass(frozen=True)
 class Times:
     wind_down: datetime
@@ -518,6 +526,19 @@ class WindDown:
     def _calendar_estimate(self, now: datetime) -> tuple[datetime, str] | None:
         """Tomorrow's first alarm from the shift calendar alone: next shift start − its lead, or
         (v0.5.5 item 16) the shift's fixed wake-up time on its day when the app plans it so."""
+        # v0.6.0 item 27: a schedule kept in the app sends each workday's wake-up with the plan.
+        plan = self.bridge.state.get("ladder_plan") or {}
+        if plan.get("schedule") == "app":
+            for item in sorted((i for i in plan.get("next_shifts") or [] if isinstance(i, dict)), key=lambda i: str(i.get("start"))):
+                start = _aware(item.get("start"))
+                if start is None or not now < start < now + timedelta(hours=36):
+                    continue
+                kind = str(item.get("type") or "Work")
+                # Fable review: a workday sent without its wake-up (an earlier build) uses the lead.
+                wake = _aware(item.get("wake")) or start - timedelta(minutes=int(self.bridge.setting_value(f"{SHIFT_LEAD_PREFIX}{kind}") or 120))
+                if wake > now:
+                    return dt_util.as_utc(wake), kind
+            return None
         sensor = self.hass.states.get(self._option(CONF_SHIFT_SENSOR) or "")
         start = dt_util.parse_datetime(sensor.attributes.get("next_shift_start") or "") if sensor else None
         if start is None or not now < start < now + timedelta(hours=36):

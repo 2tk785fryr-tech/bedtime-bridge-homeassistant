@@ -48,7 +48,8 @@
           "maps_key": "Apple Maps key (.p8)",
           "maps_key_id": "Apple Maps Key ID",
           "tomtom_key": "TomTom key",
-          "google_key": "Google key"
+          "google_key": "Google key",
+          "google_daily_budget": "Google requests a day"
         },
         "data_description": {
           "wake_action": "Helpers: turn on the entities below, for your automations that watch them (a wake-up light fade, your wake routine). Events: fire a bedtime_bridge event for automations and blueprints to trigger on. Both: do both.",
@@ -62,7 +63,7 @@
           "house_backstop_source": "What the wake deadline backstop fires on: Bedtime Bridge's backstops, or your own sensors (for setups from before Bedtime Bridge's backstops). The app shows those times.",
           "old_rung_sensors": "Your own template's early, deadline and late timestamp sensors, in that order (for setups from before Bedtime Bridge's backstops).",
           "notify_service": "e.g. notify.mobile_app_your_phone. Used for the re-plan notification and phone commands.",
-          "replan_alert": "If the shift override or your next shift changes after you planned (and before you wake), send a notification with a Re-plan button.",
+          "replan_alert": "If the shift override or your next shift changes after you planned (and before you wake), send a notification with an Update alarms button.",
           "bed_sensor": "With the helper below, tells the app whether you're really up when you stop an alarm, so it keeps the later alarms if you're still in bed. Empty only counts after a minute (the sensor drops out briefly).",
           "partner_bed_sensor": "Someone else's side of the bed. When it's occupied on a morning with no alarms, good morning is the quiet one: RUN_QUIET_MORNING instead of RUN_GOOD_MORNING (make a copy of your Good Morning shortcut without the bedroom announcement for it), Sleep In stays on so the bedroom curtains stay shut, and the good_morning event has quiet: true for your own automations.",
           "exit_latch": "e.g. a helper your own automation turns on when you open the bedroom door. A binary sensor works too (only read).",
@@ -87,7 +88,8 @@
           "maps_key": "For Apple Maps: paste the whole AuthKey_….p8 of a Maps key (developer.apple.com → Keys → Maps), BEGIN and END lines included.",
           "maps_key_id": "That Maps key's 10-character Key ID.",
           "tomtom_key": "For TomTom: the same key the app uses (developer.tomtom.com).",
-          "google_key": "For Google: a Routes API key (the app's key works if it isn't restricted to the iOS app only)."
+          "google_key": "For Google: a Routes API key (the app's key works if it isn't restricted to the iOS app only).",
+          "google_daily_budget": "Home Assistant stops asking Google for the day after this many requests, or as soon as Google refuses one (its own daily cap). The leave checks then go back to the phone. Default 120, below Google's 150."
         }
       },
       "pair": {
@@ -97,6 +99,9 @@
     },
     "abort": {
       "already_configured": "Bedtime Bridge is already set up."
+    },
+    "error": {
+      "no_notify_service": "Home Assistant has no notify action by that name. Write it in full, such as notify.mobile_app_your_iphone (find it under Tools → Actions)."
     }
   },
   "options": {
@@ -231,7 +236,7 @@
         "data_description": {
           "notify_service": "e.g. notify.mobile_app_your_phone. Used for the re-plan notification and phone commands.",
           "phone_commands": "Pushes RUN_DISARM, RUN_ARM_STAY, RUN_GOOD_MORNING and RUN_BEDTIME to the notify action above, for Shortcuts \"When I receive a notification\" automations on the phone: disarm and re-arm around a temporary alarm, your morning shortcut when you stop an app alarm (they don't trigger Clock automations), and bedtime again after you undo it. Snooze needs none: it turns on the snooze helper above.",
-          "replan_alert": "If the shift override or your next shift changes after you planned (and before you wake), send a notification with a Re-plan button.",
+          "replan_alert": "If the shift override or your next shift changes after you planned (and before you wake), send a notification with an Update alarms button.",
           "phone_battery_sensor": "The companion app's battery level (e.g. sensor.your_phone_battery_level), for Plug in your phone at go to bed and the second reminder.",
           "phone_battery_state_sensor": "The companion app's battery state (Charging, Not Charging, Full), e.g. sensor.your_phone_battery_state. Empty: found from the notify action's phone. In Low Power Mode the phone holds back notification clears, so they're sent again when it leaves Low Power Mode or starts charging.",
           "command_complete_minutes": "Once a shortcut has reported Completed (Report Shortcut Ran as its last step), a later run that reports Started but not Completed within this long sends you a notification and a command_incomplete event.",
@@ -263,7 +268,8 @@
           "maps_key": "Apple Maps key (.p8)",
           "maps_key_id": "Apple Maps Key ID",
           "tomtom_key": "TomTom key",
-          "google_key": "Google key"
+          "google_key": "Google key",
+          "google_daily_budget": "Google requests a day"
         },
         "data_description": {
           "apns_key": "Paste the whole AuthKey_….p8 file, BEGIN and END lines included, from developer.apple.com → Keys (Apple Push Notifications service). With it and the Key ID, Home Assistant starts, updates and ends the app's Live Activities by push; without them, RUN_MORNING_UPDATE stands in.",
@@ -272,9 +278,13 @@
           "maps_key": "For Apple Maps: paste the whole AuthKey_….p8 of a Maps key (developer.apple.com → Keys → Maps), BEGIN and END lines included.",
           "maps_key_id": "That Maps key's 10-character Key ID.",
           "tomtom_key": "For TomTom: the same key the app uses (developer.tomtom.com).",
-          "google_key": "For Google: a Routes API key (the app's key works if it isn't restricted to the iOS app only)."
+          "google_key": "For Google: a Routes API key (the app's key works if it isn't restricted to the iOS app only).",
+          "google_daily_budget": "Home Assistant stops asking Google for the day after this many requests, or as soon as Google refuses one (its own daily cap). The leave checks then go back to the phone. Default 120, below Google's 150."
         }
       }
+    },
+    "error": {
+      "no_notify_service": "Home Assistant has no notify action by that name. Write it in full, such as notify.mobile_app_your_iphone (find it under Tools → Actions)."
     }
   },
   "selector": {
@@ -410,6 +420,9 @@
       },
       "plan_outdated": {
         "name": "Plan out of date"
+      },
+      "waiting_on_you": {
+        "name": "Waiting on you"
       }
     },
     "number": {
@@ -486,6 +499,10 @@
     "app_outdated": {
       "title": "Update Bedtime Bridge on {device}",
       "description": "Bedtime Bridge on {device} is version {app_version}. This integration ({integration_version}) needs the app at {min_app} or later. Update the app on the phone; this goes away with its next message."
+    },
+    "integration_outdated": {
+      "title": "Update the Bedtime Bridge integration",
+      "description": "Bedtime Bridge {app_version} on {device} needs this integration at {min_integration} or later; it's {integration_version}. Update it in Settings → Marketplace, then restart Home Assistant. This goes away with the app's next message."
     }
   }
 }

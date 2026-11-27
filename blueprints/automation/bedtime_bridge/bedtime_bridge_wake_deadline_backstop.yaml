@@ -6,8 +6,8 @@ blueprint:
     was stopped and you fell back asleep, or the phone never rang).
 
 
-    The times come from the Bedtime Bridge integration's ladder (early, deadline and late,
-    set from your leave-by time), and it only runs while the ladder status reads "armed".
+    The times come from the Bedtime Bridge integration's backstops (early, deadline and late,
+    set from your leave-by time), and it only runs while their status reads "armed".
 
     - Early, still in bed: a light comes up gently and a push.
 
@@ -23,10 +23,10 @@ blueprint:
     that turned on before your first alarm (a trip out in the night) is ignored once you're
     back in bed. A bed sensor that reads unavailable counts as in bed, so a dropout
     escalates instead of going quiet. On a day off with your own alarm and backstops on, the integration marks the
-    rungs gentle: every rung then only does what the early one does.
+    backstops gentle: each one then only does what the early one does.
 
 
-    Each rung that acts tells the integration (bedtime_bridge_backstop_fired), so the app
+    Each backstop that acts tells the integration (bedtime_bridge_backstop_fired), so the app
     shows it as Fired on Your morning and counts it in the weekly summary.
   domain: automation
   source_url: https://github.com/2tk785fryr-tech/bedtime-bridge-homeassistant/blob/main/blueprints/automation/bedtime_bridge/bedtime_bridge_wake_deadline_backstop.yaml
@@ -34,12 +34,12 @@ blueprint:
     min_version: "2024.10.0"
   input:
     ladder:
-      name: The ladder (from Bedtime Bridge)
+      name: The backstops (from Bedtime Bridge)
       icon: mdi:stairs-up
       input:
         rung_early_sensor:
-          name: Early rung
-          description: Bedtime Bridge's "Ladder early" sensor.
+          name: Early backstop
+          description: The backstops' early time (Bedtime Bridge's "Ladder early" sensor).
           selector:
             entity:
               filter:
@@ -47,8 +47,8 @@ blueprint:
                   domain: sensor
                   device_class: timestamp
         rung_deadline_sensor:
-          name: Deadline rung
-          description: Bedtime Bridge's "Ladder deadline" sensor.
+          name: Deadline backstop
+          description: The backstops' deadline (Bedtime Bridge's "Ladder deadline" sensor).
           selector:
             entity:
               filter:
@@ -56,8 +56,8 @@ blueprint:
                   domain: sensor
                   device_class: timestamp
         rung_late_sensor:
-          name: Late rung
-          description: Bedtime Bridge's "Ladder late" sensor.
+          name: Late backstop
+          description: The backstops' late time (Bedtime Bridge's "Ladder late" sensor).
           selector:
             entity:
               filter:
@@ -65,7 +65,7 @@ blueprint:
                   domain: sensor
                   device_class: timestamp
         ladder_status_sensor:
-          name: Ladder status
+          name: Backstop status
           description: >
             Bedtime Bridge's "Ladder status" sensor. The backstop runs only while it reads
             armed.
@@ -89,7 +89,7 @@ blueprint:
         latch_helper:
           name: Left-the-bedroom latch (optional)
           description: >
-            On once you've left the bedroom this morning; that stands the whole ladder down.
+            On once you've left the bedroom this morning; that stands all the backstops down.
             Bedtime Bridge's own Exit latch switch (it follows your bedroom door sensor) or a
             helper of yours. Leave empty to go by the bed sensor alone.
           default: ""
@@ -102,7 +102,7 @@ blueprint:
         presence_entities:
           name: Only when you're home (optional)
           description: >
-            Away, or in any other zone, stops the ladder; unknown counts as home. Leave empty
+            Away, or in any other zone, stops the backstops; unknown counts as home. Leave empty
             to run whether you're home or not.
           default: []
           selector:
@@ -123,8 +123,8 @@ blueprint:
           selector:
             text: {}
         ramp_lights:
-          name: Early-rung lights (optional)
-          description: Brought up gently at the early rung, e.g. a bedside lamp.
+          name: Early-backstop lights (optional)
+          description: Brought up gently at the early backstop, e.g. a bedside lamp.
           default: []
           selector:
             entity:
@@ -132,7 +132,7 @@ blueprint:
               multiple: true
         alert_lights:
           name: Deadline lights (optional)
-          description: Turned on to full at the deadline and late rungs.
+          description: Turned on to full at the deadline and late backstops.
           default: []
           selector:
             entity:
@@ -164,7 +164,7 @@ blueprint:
           selector:
             text: {}
         extra_actions:
-          name: Also do this at the deadline and late rungs (optional)
+          name: Also do this at the deadline and late backstops (optional)
           description: For example open the curtains or play music. Runs after the announcement.
           default: []
           selector:
@@ -175,7 +175,7 @@ blueprint:
       collapsed: true
       input:
         override_entities:
-          name: Skip the ladder while any of these is on (optional)
+          name: Skip the backstops while any of these is on (optional)
           description: >
             Leave empty for none. Not Sleep In: sleeping in is exactly what this catches.
           default: []
@@ -183,7 +183,7 @@ blueprint:
             entity:
               multiple: true
         ramp_brightness_pct:
-          name: Early-rung brightness
+          name: Early-backstop brightness
           default: 40
           selector:
             number:
@@ -192,7 +192,7 @@ blueprint:
               unit_of_measurement: "%"
               mode: slider
         ramp_transition_seconds:
-          name: Early-rung fade
+          name: Early-backstop fade
           default: 60
           selector:
             number:
@@ -231,7 +231,7 @@ blueprint:
               unit_of_measurement: s
               mode: slider
         startup_window_minutes:
-          name: After a restart, catch up on a rung that passed within
+          name: After a restart, catch up on a backstop that passed within
           description: So a restart later in the day doesn't replay the morning.
           default: 60
           selector:

@@ -47,6 +47,111 @@ class DriveTimeError(Exception):
         super().__init__(scrub(message, *secrets))
 
 
+class GoogleStopped(DriveTimeError):
+    """Google wasn't asked: today's budget is used, or Google refused a request (its own daily
+    cap). Not retried until tomorrow (v0.6.0 item 0.5.6-14)."""
+
+
+GOOGLE_DAILY_BUDGET = 120
+GOOGLE_DAYS_KEPT = 7
+STOP_BUDGET = "budget"
+STOP_REFUSED = "refused"
+STOP_PAUSED = "paused"
+PAUSE_AFTER_REFUSAL = 3600
+START_KEPT_SECONDS = 14 * 86400
+
+
+def is_google_refusal(status: int, text: str) -> bool:
+    """A refusal: HTTP 429, or RESOURCE_EXHAUSTED in the answer."""
+    return status == 429 or "RESOURCE_EXHAUSTED" in (text or "")
+
+
+def is_daily_refusal(text: str) -> bool:
+    """Google's daily cap: RESOURCE_EXHAUSTED naming a per-day quota (anything else, such as a
+    per-minute 429, pauses Google for an hour instead)."""
+    lower = (text or "").lower()
+    return "RESOURCE_EXHAUSTED" in (text or "") and ("per day" in lower or "perday" in lower or "per_day" in lower)
+
+
+def _local_day() -> str:
+    from homeassistant.util import dt as dt_util  # noqa: PLC0415
+
+    return dt_util.now().date().isoformat()
+
+
+class GoogleUsage:
+    """Google requests per day (v0.6.0 item 0.5.6-14), kept in a dict the bridge saves with its
+    state: {"days": {"2026-11-26": 12}, "refused_on": "2026-11-26", "paused_until": epoch,
+    "last": {trip: [seconds, epoch]}}. Never holds the key."""
+
+    def __init__(self, store: dict[str, Any], budget: int | None = None, today=None, clock=None) -> None:
+        self.store = store
+        self.budget = int(budget or GOOGLE_DAILY_BUDGET)
+        self._today = today or _local_day
+        self._clock = clock or time.time
+
+    def today(self) -> int:
+        return int((self.store.get("days") or {}).get(self._today(), 0))
+
+    def stopped(self) -> str | None:
+        """Why Google isn't asked today, or None."""
+        if self.store.get("refused_on") == self._today():
+            return STOP_REFUSED
+        until = self.store.get("paused_until")
+        if isinstance(until, (int, float)) and self._clock() < until:
+            return STOP_PAUSED
+        if self.today() >= self.budget:
+            return STOP_BUDGET
+        return None
+
+    def note_request(self) -> None:
+        day = self._today()
+        days = dict(self.store.get("days") or {})
+        days[day] = int(days.get(day, 0)) + 1
+        self.store["days"] = {k: days[k] for k in sorted(days)[-GOOGLE_DAYS_KEPT:]}
+
+    def note_refused(self, daily: bool = True) -> None:
+        if daily:
+            self.store["refused_on"] = self._today()
+        else:
+            self.store["paused_until"] = self._clock() + PAUSE_AFTER_REFUSAL
+
+    def logged_today(self) -> bool:
+        """Whether today's stop was already logged (logged once a day, at info)."""
+        if self.store.get("logged_on") == self._today():
+            return True
+        self.store["logged_on"] = self._today()
+        return False
+
+    def last_seconds(self, trip: str) -> float | None:
+        """The last answer for the trip, as a starting guess, if under 14 days old."""
+        value = (self.store.get("last") or {}).get(trip)
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            return None
+        seconds, at = value
+        if not isinstance(seconds, (int, float)) or not isinstance(at, (int, float)):
+            return None
+        return float(seconds) if self._clock() - at < START_KEPT_SECONDS else None
+
+    def keep_seconds(self, trip: str, seconds: float) -> None:
+        last = dict(self.store.get("last") or {})
+        last.pop(trip, None)
+        last[trip] = [seconds, self._clock()]
+        self.store["last"] = dict(list(last.items())[-10:])
+
+
+def google_attributes(store: dict[str, Any] | None, budget: int | None, today: str | None = None) -> dict[str, Any]:
+    """The drive-time sensor's Google attributes: today's count, the last 7 days, the budget and
+    whether Google is paused for the day."""
+    usage = GoogleUsage(store if store is not None else {}, budget, (lambda: today) if today else None)
+    return {
+        "google_requests_today": usage.today(),
+        "google_requests_by_day": dict(usage.store.get("days") or {}),
+        "google_daily_budget": usage.budget,
+        "google_paused": usage.stopped(),
+    }
+
+
 @dataclass
 class Place:
     """Where a drive goes: coordinates when the calendar had them, else the address."""
@@ -172,13 +277,23 @@ class Google:
     """Google Routes API: departure times only, so it works back from the arrival (as the app's
     DepartureSolver does)."""
 
-    def __init__(self, session: ClientSession, key: str, bundle_id: str | None = None, pessimistic: bool = False) -> None:
+    def __init__(self, session: ClientSession, key: str, bundle_id: str | None = None, pessimistic: bool = False,
+                 usage: GoogleUsage | None = None) -> None:
         self._session = session
         self._key = key.strip()
         self._bundle_id = bundle_id
         self._pessimistic = pessimistic
+        # v0.6.0 item 0.5.6-14: counted per day, stopped at the budget or Google's refusal.
+        self._usage = usage
 
     async def _duration(self, origin: Place, destination: Place, depart: datetime) -> float:
+        if self._usage is not None:
+            stop = self._usage.stopped()
+            if stop:
+                raise GoogleStopped({STOP_REFUSED: "Google paused for today: refused (its daily cap)",
+                                     STOP_PAUSED: "Google paused for an hour: refused",
+                                     STOP_BUDGET: "Google paused for today: daily budget used"}[stop])
+            self._usage.note_request()
         def waypoint(place: Place) -> dict[str, Any]:
             if place.has_coordinates:
                 return {"location": {"latLng": {"latitude": place.latitude, "longitude": place.longitude}}}
@@ -197,7 +312,15 @@ class Google:
             async with self._session.post("https://routes.googleapis.com/directions/v2:computeRoutes", json=body,
                                           headers=headers, timeout=TIMEOUT) as response:
                 if response.status != 200:
-                    raise DriveTimeError(f"Google {response.status}: {(await response.text())[:150]}", self._key)
+                    text = await response.text()
+                    if is_google_refusal(response.status, text):
+                        # Google's daily cap: no retry today; any other refusal: an hour.
+                        daily = is_daily_refusal(text)
+                        if self._usage is not None:
+                            self._usage.note_refused(daily)
+                        raise GoogleStopped(f"Google refused ({response.status}), paused {'for today' if daily else 'for an hour'}",
+                                            self._key)
+                    raise DriveTimeError(f"Google {response.status}: {text[:150]}", self._key)
                 data = await response.json()
         except (ClientError, TimeoutError) as err:
             raise DriveTimeError(f"Google: {err}", self._key) from err
@@ -207,14 +330,26 @@ class Google:
         return float(str(routes[0]["duration"]).rstrip("s"))
 
     async def drive_seconds(self, origin: Place, destination: Place, arrive_by: datetime, now: datetime | None = None) -> float:
-        return await solve_departure(arrive_by, now or datetime.now(arrive_by.tzinfo),
-                                     lambda depart: self._duration(origin, destination, depart))
+        trip = f"{_where(origin)}|{_where(destination)}|{'worst' if self._pessimistic else 'typical'}"
+        # v0.6.0 item 0.5.6-14: start from the last answer for this trip (usually 1-2 requests).
+        start = self._usage.last_seconds(trip) if self._usage is not None else None
+        seconds = await solve_departure(arrive_by, now or datetime.now(arrive_by.tzinfo),
+                                        lambda depart: self._duration(origin, destination, depart), start_seconds=start)
+        if self._usage is not None:
+            self._usage.keep_seconds(trip, seconds)
+        return seconds
 
 
-async def solve_departure(arrive_by: datetime, now: datetime, duration, max_requests: int = 4, tolerance: float = 60) -> float:
-    """The time to allow (arrival − the latest departure found that still arrives in time)."""
+def _where(place: Place) -> str:
+    return f"{place.latitude:.4f},{place.longitude:.4f}" if place.has_coordinates else place.text
+
+
+async def solve_departure(arrive_by: datetime, now: datetime, duration, max_requests: int = 4, tolerance: float = 60,
+                          start_seconds: float | None = None) -> float:
+    """The time to allow (arrival − the latest departure found that still arrives in time).
+    `start_seconds`: the last answer for this trip, the first guess (else 30 min)."""
     earliest = now + timedelta(minutes=1)
-    depart = max(arrive_by - timedelta(minutes=30), earliest)
+    depart = max(arrive_by - timedelta(seconds=start_guess(start_seconds, arrive_by, now)), earliest)
     latest_on_time: datetime | None = None
     longest = 0.0
     for _ in range(max_requests):
@@ -223,8 +358,11 @@ async def solve_departure(arrive_by: datetime, now: datetime, duration, max_requ
         arrives = depart + timedelta(seconds=trip)
         if arrives <= arrive_by and (latest_on_time is None or depart > latest_on_time):
             latest_on_time = depart
-        if abs((arrives - arrive_by).total_seconds()) <= tolerance:
-            break
+        late = (arrives - arrive_by).total_seconds()
+        if abs(late) <= tolerance:
+            # Landed: this try decides, not an earlier (stale) on-time guess. On time: leave at
+            # this departure; a little late: its trip plus the lateness.
+            return (arrive_by - depart).total_seconds() if late <= 0 else trip + late
         following = max(arrive_by - timedelta(seconds=trip), earliest)
         if following == depart:
             break
@@ -234,17 +372,33 @@ async def solve_departure(arrive_by: datetime, now: datetime, duration, max_requ
     return longest
 
 
+def start_guess(start_seconds: float | None, arrive_by: datetime, now: datetime) -> float:
+    """The first try: the last answer when sensible (at most 3 hours, leaving after now), else 30 min."""
+    fallback = 30 * 60.0
+    if not start_seconds or start_seconds <= 0 or start_seconds > 3 * 3600:
+        return fallback
+    room = (arrive_by - now).total_seconds() - 120
+    return float(start_seconds) if start_seconds < room else min(fallback, max(room, 60.0))
+
+
 async def drive_seconds(services: list[Any], origin: Place, destination: Place, arrive_by: datetime) -> float:
     """The longest answer of the services that gave one (one service: its answer)."""
     answers: list[float] = []
     errors: list[str] = []
+    stopped: list[str] = []
     for service in services:
         try:
             answers.append(await service.drive_seconds(origin, destination, arrive_by))
+        except GoogleStopped as err:
+            stopped.append(str(err))
         except DriveTimeError as err:
             errors.append(str(err))
+        except Exception as err:  # noqa: BLE001 - v0.6.0 item 36: any service error falls back to the phone
+            errors.append(f"{type(err).__name__}: {err}")
     if not answers:
-        raise DriveTimeError("; ".join(errors) or "no drive-time service set up")
+        if stopped and not errors:
+            raise GoogleStopped("; ".join(stopped))
+        raise DriveTimeError("; ".join(errors + stopped) or "no drive-time service set up")
     if errors:
         _LOGGER.info("Bedtime Bridge drive time: %s", "; ".join(errors))
     return max(answers)

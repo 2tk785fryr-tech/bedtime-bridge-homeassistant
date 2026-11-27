@@ -5,13 +5,19 @@
 **Up on time, every time.**
 
 The Home Assistant side of the [Bedtime Bridge](https://github.com/2tk785fryr-tech/bedtime-bridge-showcase)
-iPhone app. The app reads your work schedule (a regular 9-to-5 or shifts) and appointments from
-your calendar and sets your wake-up alarms. This integration lets your house take part: it knows when you snooze, stop, nap, wind
-down and go to bed, turns switches on and off for your own automations, and works out a backstop
-ladder that steps in with lights and speakers if you're still in bed when you should be up.
+iPhone app. The app knows your work schedule (a regular 9-to-5 or shifts) from your calendar, your
+week or a rotation, and your appointments from your calendar, and sets your wake-up alarms. This
+integration lets your house take part: it knows when you snooze, stop, nap, wind down and go to
+bed, turns switches on and off for your own automations, and works out backstops that step in
+with lights and speakers if you're still in bed when you should be up.
 
-This repo holds only the latest version of the integration (**0.4.12.8**), plus generic
+This repo holds only the latest version of the integration (**0.4.12.9**), plus generic
 blueprints you can import with one tap.
+
+**New with app 0.6.0 (integration 0.4.12.9):** the backstops work with My week and rotations too,
+not only a work calendar. When Home Assistant gets drive times from Google (**Drive times from**),
+the phone no longer asks Google for the same morning, and a daily limit under **Configure → Keys**
+keeps the requests down. Update from the Marketplace.
 
 ---
 
@@ -50,10 +56,17 @@ Copy `custom_components/bedtime_bridge` from this repo into your Home Assistant
 3. The last step shows a **Pair Bedtime Bridge** link. Open that step in the Home Assistant app
    on your iPhone and tap the link: both addresses are saved in Bedtime Bridge. If the link
    doesn't open, copy it into the app's address field (**Settings → Home Assistant** in
-   Bedtime Bridge).
+   Bedtime Bridge, or Smart home › Home Assistant when Settings is grouped).
 
 You can see the pairing link again under the integration's **Configure**. Everything else in
 the options is optional.
+
+**Keep the link and addresses private.** The long code at the end of each address is the only
+key, as with any Home Assistant webhook. Anyone who has it can see your alarm and shift times and
+whether you're home, and can send alarm updates, run the wake and bedtime routines, disarm,
+change the integration's settings, reset the alarms and backstops, or write reports. If you think
+it got out, delete the integration and add it again: that makes new addresses, but you set it up
+and pair the phone again.
 
 ---
 
@@ -79,8 +92,8 @@ Snooze, Stop, Early wake-up and Bedtime work like buttons: if one is already on,
 and on again, so automations that start on "on" run each time. Bedtime Bridge turns Snooze, Stop,
 Early wake-up and Awake For Day off again at bedtime.
 
-It also adds sensors (next alarm, last plan, leave-by, the backstop ladder's early, deadline and
-late times and its status, snoozing, wind-down) and a number for each setting the app reads.
+It also adds sensors (next alarm, last plan, leave-by, the backstops' early, deadline and late
+times and their status, snoozing, wind-down) and a number for each setting the app reads.
 
 **Briefings.** The morning and bedtime briefings are on `sensor.bedtime_bridge_briefing`
 (attributes `morning` and `bedtime`) and come as a `bedtime_bridge` event with type
@@ -131,7 +144,7 @@ that step.
 
 | Blueprint | What it does | What to pick | Import |
 |---|---|---|---|
-| **Wake deadline backstop** (recommended) | Still in bed as your get-up deadline nears? It steps up: a lamp and a push, then a critical push, an announcement and full lights, until you're up. Silent on every normal morning. | The integration's Ladder early, deadline and late sensors and Ladder status; your bed sensor; `switch.bedtime_bridge_exit_latch`; your notify action; lamps, lights, speakers and text-to-speech if you want them. | [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_wake_deadline_backstop.yaml) |
+| **Wake deadline backstop** (recommended) | Still in bed as your get-up deadline nears? It steps up: a lamp and a push, then a critical push, an announcement and full lights, until you're up. Silent on every normal morning. | The integration's backstop sensors: early, deadline and late (`sensor.bedtime_bridge_ladder_early`, `sensor.bedtime_bridge_ladder_deadline`, `sensor.bedtime_bridge_ladder_late`) and status (`sensor.bedtime_bridge_ladder_status`); your bed sensor; `switch.bedtime_bridge_exit_latch`; your notify action; lamps, lights, speakers and text-to-speech if you want them. | [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_wake_deadline_backstop.yaml) |
 | **Alarm event** | Runs your actions when the app reports an alarm event: snoozed, stopped, alarms planned or cancelled, leave-by updated. | The event, and your actions. One automation per event. | [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_alarm_event.yaml) |
 | **Missing plan** | Warns you if a work day is coming but tonight's alarms weren't set. Checks once you've been in bed a while. | Your bed sensor, the integration's Last plan sensor, a shift sensor (below), your notify action. | [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_missing_plan.yaml) |
 | **Nap** | When a nap starts in a room, closes its curtains and turns off its lights, then puts them back after. Add the room's bed or presence sensors so a couch nap leaves the bedroom alone. | `switch.bedtime_bridge_napping`, the room's sensors, curtains and lights. One automation per room. | [![Import blueprint](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2F2tk785fryr-tech%2Fbedtime-bridge-homeassistant%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fbedtime_bridge%2Fbedtime_bridge_nap.yaml) |
@@ -152,7 +165,7 @@ Shifts and calendar**. Without one, skip that blueprint.
 
 - **Settings → Devices & services → Bedtime Bridge** shows its switches and sensors: next alarm,
   last plan, the backstop times, snoozing.
-- In the app, **Settings → Home Assistant** shows **Connected**.
+- In the app, **Settings → Home Assistant** (Smart home › Home Assistant when grouped) shows **Connected**.
 - Tap **Set alarms** in the app: the integration's Last plan sensor updates. (**Preview
   tomorrow** only shows a plan and sets nothing, so the sensor stays as it was.)
 
@@ -163,11 +176,12 @@ Shifts and calendar**. Without one, skip that blueprint.
 - **The app says "Not connected":** check Home Assistant is reachable from your phone (try the
   Companion app), then pair again with the link under **Configure**.
 - **Alarms weren't set at bedtime:** the Missing plan blueprint warns you about this. Check the
-  integration's Last plan sensor and the app's **Settings → The app → History**.
+  integration's Last plan sensor and the app's **Settings → The app → History** (**Advanced → History**
+  when Settings is grouped).
 - **A switch never turns on:** check the helper's choice under **Configure**. With **Use mine**
   and nothing picked, that helper isn't used. A binary sensor is only read.
-- **The backstop never runs:** its Ladder status sensor must read `armed`; the sensor's reason
-  says why it isn't.
+- **The backstop never runs:** its status sensor (`sensor.bedtime_bridge_ladder_status`) must read
+  `armed`; the sensor's reason says why it isn't.
 - **After an update:** restart Home Assistant. Your settings and pairing stay.
 
 ### Upgrading to 0.4.12

@@ -19,6 +19,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from . import BedtimeBridgeConfigEntry
+from . import drivetime as dtm
+from .const import CONF_GOOGLE_BUDGET
 from .entity import BedtimeBridgeEntity
 
 
@@ -138,6 +140,9 @@ SENSORS = (
         device_class=SensorDeviceClass.DURATION,
         native_unit_of_measurement=UnitOfTime.MINUTES,
         value=lambda s: s.get("drive_minutes"),
+        # v0.6.0 item 0.5.6-14: Home Assistant's own Google requests per day.
+        attributes=lambda s: {},
+        bridge_attributes=lambda b: dtm.google_attributes(b.state.get("google_requests"), b.options.get(CONF_GOOGLE_BUDGET)),
     ),
     BridgeSensorDescription(
         key="weather_extra",

@@ -11,10 +11,11 @@ from homeassistant.components import webhook
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
 
 from .bridge import BedtimeBridge
 from .pairing import async_delete_cloudhook
-from .const import CONF_NOTIFY, CONF_WEBHOOK_ID, CONF_WIND_DOWN_NOTIFY, DOMAIN, MADE_HELPERS, SOURCE_MINE, SOURCE_SUFFIX
+from .const import CONF_NOTIFY, CONF_WEBHOOK_ID, ISSUE_APP_OUTDATED, ISSUE_INTEGRATION_OUTDATED, CONF_WIND_DOWN_NOTIFY, DOMAIN, MADE_HELPERS, SOURCE_MINE, SOURCE_SUFFIX
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,8 +91,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: BedtimeBridgeConfigEntr
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: BedtimeBridgeConfigEntry) -> None:
-    """Deleting the integration also deletes its Nabu Casa cloudhook, if it made one."""
+    """Deleting the integration also deletes its Nabu Casa cloudhook, if it made one, and
+    (v0.6.0 item 36) its repair notices."""
     await async_delete_cloudhook(hass, entry.data[CONF_WEBHOOK_ID])
+    for issue in (ISSUE_APP_OUTDATED, ISSUE_INTEGRATION_OUTDATED):
+        ir.async_delete_issue(hass, DOMAIN, issue)
 
 
 async def _async_reload(hass: HomeAssistant, entry: BedtimeBridgeConfigEntry) -> None:

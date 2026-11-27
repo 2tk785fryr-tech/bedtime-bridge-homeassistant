@@ -5,10 +5,12 @@ EVENT = "bedtime_bridge"
 
 # v0.5.2 item 11: this integration's version (the same as manifest.json) and the lowest app
 # version it needs. Each release sets them. An app that sends no version is from before 0.5.2.
-INTEGRATION_VERSION = "0.4.12.8"
+INTEGRATION_VERSION = "0.4.12.9"
 MIN_APP_VERSION = "0.5.0"
 APP_VERSION_BEFORE_CHECK = "0.5.1"
 ISSUE_APP_OUTDATED = "app_outdated"
+# v0.6.0 item 36: the app needs a newer integration (its min_integration).
+ISSUE_INTEGRATION_OUTDATED = "integration_outdated"
 # v0.4.11 item 26: Wake Deadline Backstop (blueprint v1-40) fires this when a rung escalates.
 EVENT_BACKSTOP_FIRED = "bedtime_bridge_backstop_fired"
 
@@ -61,6 +63,10 @@ CONF_MAPS_KEY = "maps_key"
 CONF_MAPS_KEY_ID = "maps_key_id"
 CONF_TOMTOM_KEY = "tomtom_key"
 CONF_GOOGLE_KEY = "google_key"
+# v0.6.0 item 0.5.6-14: Google requests a day before Home Assistant stops asking Google (below its
+# own 150-a-day cap); past it, or once Google refuses, the leave checks go back to the phone.
+CONF_GOOGLE_BUDGET = "google_daily_budget"
+DEFAULT_GOOGLE_BUDGET = 120
 # v0.4.6 item 2: hallway presence outside the bedroom (out of bed → door → hallway = up).
 CONF_HALLWAY_SENSORS = "hallway_sensors"
 # Open from v0.4.6 item 2: the other side of the bed. Occupied on a morning with no alarms, good
@@ -118,6 +124,14 @@ SUGGESTED_HALLWAY: list[str] = []
 SUGGESTED_HOME_CHECKS: list[str] = []
 DEFAULT_SHIFT_TYPES = "Days, Nights"
 DEFAULT_LADDER_SHIFT_TYPES = ["Days"]
+
+
+def ladder_shift_types(options) -> list[str]:
+    """v0.6.0 item 36: the backstops' shift types. Never set: the default; cleared: none."""
+    if CONF_LADDER_SHIFT_TYPES not in options:
+        return list(DEFAULT_LADDER_SHIFT_TYPES)
+    value = options.get(CONF_LADDER_SHIFT_TYPES)
+    return [str(t) for t in value] if isinstance(value, list) else []
 DEFAULT_CALENDAR = "calendar.calendar"
 # Arrive-early buffer for the calendar leave-by until a plan has sent the app's own.
 DEFAULT_WORK_BUFFER = 10
