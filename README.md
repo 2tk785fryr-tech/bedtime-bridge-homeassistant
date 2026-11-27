@@ -11,10 +11,10 @@ integration lets your house take part: it knows when you snooze, stop, nap, wind
 bed, turns switches on and off for your own automations, and works out backstops that step in
 with lights and speakers if you're still in bed when you should be up.
 
-This repo holds only the latest version of the integration (**0.4.12.10**), plus generic
+This repo holds only the latest version of the integration (**0.4.13**), plus generic
 blueprints you can import with one tap.
 
-**New with app 0.6.0 (integration 0.4.12.10):** the backstops work with My week and rotations too,
+**New with app 0.6.0 (integration 0.4.13):** the backstops work with My week and rotations too,
 not only a work calendar. When Home Assistant gets drive times from Google (**Drive times from**),
 the phone no longer asks Google for the same morning, and a daily limit under **Configure → Keys**
 keeps the requests down. Work trips, leave and days off kept in the app turn the backstops off
